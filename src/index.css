@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800;900&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-display: 'Barlow Condensed', 'Outfit', sans-serif;
+
+  /* Warm charcoal — replaces cold navy */
+  --color-navy-950: #0E0C09;
+  --color-navy-900: #141210;
+  --color-navy-800: #1C1916;
+  --color-navy-700: #262219;
+  --color-navy-600: #312C1F;
+
+  /* Warm amber — replaces champagne gold */
+  --color-gold-300: #FBCC6A;
+  --color-gold-400: #F5A623;
+  --color-gold-500: #E09515;
+  --color-gold-600: #C07D0A;
+
+  /* Warm off-white */
+  --color-cream-50:  #FAFAF8;
+  --color-cream-100: #F4F0EB;
+  --color-cream-200: #DDD8D0;
+  --color-cream-300: #A8A39D;
+
+  /* Status colours (unchanged) */
+  --color-status-pending: #F59E0B;
+  --color-status-confirmed: #3B82F6;
+  --color-status-progress: #8B5CF6;
+  --color-status-completed: #10B981;
+  --color-status-cancelled: #EF4444;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  font-family: 'Outfit', system-ui, sans-serif;
+  background-color: #0E0C09;
+  color: #F4F0EB;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(245, 166, 35, 0.25) transparent;
+}
+
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-thumb { background: rgba(245, 166, 35, 0.25); border-radius: 3px; }
+*::-webkit-scrollbar-track { background: transparent; }
