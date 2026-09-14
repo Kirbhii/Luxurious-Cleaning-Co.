@@ -1,12 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Users, Award, Heart } from 'lucide-react';
 
-const TEAM = [
-  { name: 'Alexandra Morgan', role: 'Founder & CEO', img: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=400&h=400&fit=crop&auto=format', bio: 'With 15 years in luxury hospitality management, Alexandra founded Luxurious Cleaning Co. with a vision to bring hotel-grade standards to residential and commercial spaces.' },
-  { name: 'Marcus Chen', role: 'Head of Operations', img: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&auto=format', bio: 'Marcus oversees all field operations and training programs, ensuring every cleaner meets the exacting standards our clients expect.' },
-  { name: 'Priya Nair', role: 'Client Relations Director', img: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&h=400&fit=crop&auto=format', bio: 'Priya leads our client experience team, ensuring every interaction — from first booking to final photo — exceeds expectations.' },
-];
-
 export default function About() {
   return (
     <div className="pt-16 min-h-screen bg-navy-950">
@@ -83,28 +77,6 @@ export default function About() {
                 </div>
                 <h3 className="font-serif text-xl text-cream-100 mb-3">{v.title}</h3>
                 <p className="text-sm text-cream-300 leading-relaxed">{v.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Team */}
-      <section className="py-20">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center mb-12">
-            <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-3">The People</div>
-            <h2 className="font-serif text-4xl text-cream-100">Leadership Team</h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {TEAM.map(member => (
-              <div key={member.name} className="bg-navy-800 border border-gold-400/10 rounded-2xl overflow-hidden">
-                <img src={member.img} alt={member.name} className="w-full h-56 object-cover" />
-                <div className="p-6">
-                  <h3 className="font-serif text-lg text-cream-100">{member.name}</h3>
-                  <div className="text-xs text-gold-400 font-medium tracking-wide uppercase mt-0.5 mb-3">{member.role}</div>
-                  <p className="text-sm text-cream-300 leading-relaxed">{member.bio}</p>
-                </div>
               </div>
             ))}
           </div>
