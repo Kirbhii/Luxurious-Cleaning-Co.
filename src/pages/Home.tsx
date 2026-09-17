@@ -174,13 +174,6 @@ function FeatureBlock({
       >
         {title}
       </p>
-
-      <div
-        className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wide ${subColor}`}
-      >
-        <ArrowRight size={13} />
-        Learn More
-      </div>
     </div>
   );
 }

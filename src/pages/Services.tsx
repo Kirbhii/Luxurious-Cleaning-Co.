@@ -3,7 +3,7 @@ import { ArrowRight, CheckCircle2 } from 'lucide-react';
 
 const SERVICES = [
   {
-    name: 'Residential Cleaning', icon: '🏠',
+    name: 'Residential Cleaning',
     tagline: 'Your home, consistently pristine.',
     desc: 'Our signature residential cleaning service is tailored to your home\'s layout and your lifestyle. From weekly maintenance to seasonal refreshes, we adapt to your needs.',
     includes: ['Full kitchen clean including appliances exterior', 'All bathrooms sanitized and polished', 'Dusting, vacuuming, mopping all surfaces', 'Bedroom and living area refresh', 'Waste removal and bin liners replaced'],
@@ -11,7 +11,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Deep Cleaning', icon: '✨',
+    name: 'Deep Cleaning', 
     tagline: 'A true top-to-bottom reset.',
     desc: 'The deep clean is our most comprehensive service — covering every surface, appliance interior, baseboard, and hard-to-reach area.',
     includes: ['Inside oven, fridge, and microwave', 'Cabinet interiors and drawer cleaning', 'Baseboard, door frame, and trim detailing', 'Window sill and blind cleaning', 'Tile and grout treatment'],
@@ -19,7 +19,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1556909212-d5b604d0c90d?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Move-In / Move-Out Cleaning', icon: '📦',
+    name: 'Move-In / Move-Out Cleaning', 
     tagline: 'Every transition deserves a fresh start.',
     desc: 'Moving is stressful enough. Our move-in and move-out service ensures your space is immaculate for landlords, new tenants, or new owners.',
     includes: ['Full deep clean of all rooms', 'Inside all appliances', 'Wall spot cleaning', 'Window and track cleaning', 'Closet and cabinet interiors'],
@@ -27,7 +27,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1600607688960-e095ff83135c?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Post-Construction Cleaning', icon: '🏗️',
+    name: 'Post-Construction Cleaning',
     tagline: 'Revealing the space behind the work.',
     desc: 'Construction leaves behind fine dust, debris, and residue invisible to the eye but felt underfoot. Our post-construction team uses specialized equipment and techniques to deliver reveal-ready results.',
     includes: ['Construction dust and debris removal', 'Window cleaning — interior and exterior', 'Polished surface protection and care', 'Air vent and duct surface cleaning', 'Final inspection walk-through'],
@@ -35,7 +35,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Commercial Cleaning', icon: '🏢',
+    name: 'Commercial Cleaning',
     tagline: 'Professional spaces demand professional standards.',
     desc: 'Our commercial service is designed for retail environments, clinics, boutiques, and any customer-facing business that demands impeccable presentation.',
     includes: ['Floor care — vacuum, mop, and buffing', 'Reception and customer area detailing', 'Restroom deep sanitization', 'Display and surface dusting', 'Waste management and restocking'],
@@ -43,7 +43,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Condo Cleaning', icon: '🏙️',
+    name: 'Condo Cleaning', 
     tagline: 'Premium living deserves premium care.',
     desc: 'Condominiums have unique needs — smaller footprints, premium finishes, and shared-space considerations. Our condo specialists know exactly how to treat every surface.',
     includes: ['Premium surface and finish care', 'Balcony and exterior window sills', 'Kitchen and bathroom polish', 'Building access coordination', 'Discretion and security awareness'],
@@ -51,7 +51,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Office Cleaning', icon: '💼',
+    name: 'Office Cleaning', 
     tagline: 'Minimal disruption. Maximum impact.',
     desc: 'After-hours or early-morning, our office cleaning teams ensure your workspace is ready for a productive day — every day.',
     includes: ['Desk and workstation cleaning', 'Common area maintenance', 'Kitchen and break room', 'Restroom sanitization', 'Floor care and entrance detailing'],
@@ -59,7 +59,7 @@ const SERVICES = [
     img: 'https://images.unsplash.com/photo-1497366754035-f200968a6e72?w=700&h=500&fit=crop&auto=format',
   },
   {
-    name: 'Specialized Cleaning', icon: '🎯',
+    name: 'Specialized Cleaning', 
     tagline: 'Bespoke solutions for unique requirements.',
     desc: 'Some spaces or situations don\'t fit a standard template. We work with you to design a service perfectly suited to your specific need.',
     includes: ['Pre- or post-event cleaning', 'Unique surface and material care', 'High-frequency sanitization programs', 'Custom scope and schedule', 'Dedicated account coordination'],
@@ -98,7 +98,6 @@ export default function Services() {
                 />
               </div>
               <div>
-                <div className="text-3xl mb-3">{service.icon}</div>
                 <h2 className="font-serif text-3xl text-cream-100 mb-1">{service.name}</h2>
                 <div className="text-gold-400 text-sm italic mb-4">{service.tagline}</div>
                 <p className="text-cream-300 text-sm leading-relaxed mb-5">{service.desc}</p>
