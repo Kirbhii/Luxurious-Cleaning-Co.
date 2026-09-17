@@ -25,14 +25,14 @@ const IMG = {
 };
 
 const SERVICES = [
-  { name: 'Residential Cleaning', icon: '🏠', img: IMG.livingRoom },
-  { name: 'Deep Cleaning', icon: '✨', img: IMG.kitchen },
-  { name: 'Move-In / Move-Out', icon: '📦', img: IMG.afterClean },
-  { name: 'Post-Construction', icon: '🏗️', img: IMG.mopBucket },
-  { name: 'Commercial Cleaning', icon: '🏢', img: IMG.commercial },
-  { name: 'Condo Cleaning', icon: '🏙️', img: IMG.gloves },
-  { name: 'Office Cleaning', icon: '💼', img: IMG.commercial },
-  { name: 'Specialized Cleaning', icon: '🎯', img: IMG.livingRoom },
+  { name: 'Residential Cleaning', img: IMG.livingRoom },
+  { name: 'Deep Cleaning', img: IMG.kitchen },
+  { name: 'Move-In / Move-Out', img: IMG.afterClean },
+  { name: 'Post-Construction', img: IMG.mopBucket },
+  { name: 'Commercial Cleaning', img: IMG.commercial },
+  { name: 'Condo Cleaning', img: IMG.gloves },
+  { name: 'Office Cleaning', img: IMG.commercial },
+  { name: 'Specialized Cleaning', img: IMG.livingRoom },
 ];
 
 const TESTIMONIALS = [
@@ -319,7 +319,6 @@ export default function Home() {
                 {/* Amber bottom bar on hover */}
                 <div className="absolute inset-x-0 bottom-0 h-1 bg-[#F5A623] scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left" />
                 <div className="absolute inset-0 flex flex-col justify-end p-4">
-                  <div className="text-xl mb-1">{service.icon}</div>
                   <h3 className="font-display font-black text-xs uppercase tracking-wide text-white leading-tight group-hover:text-[#F5A623] transition-colors">
                     {service.name}
                   </h3>
