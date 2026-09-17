@@ -15,6 +15,11 @@ export interface User {
   name: string;
   role: UserRole;
   phone: string;
+  employeeId?: string | null;
+  companyId?: string | null;
+  companyCode?: string | null;
+  assignedZoneId?: string | null;
+  permissions?: string[];
   membershipTier: MembershipTier | null;
   membershipStatus: 'none' | 'active' | 'pending';
   partnerApplicationId: string | null;
@@ -168,12 +173,14 @@ const SAMPLE_USERS: User[] = [
   {
     id: 'u3', email: 'cleaner@demo.com', password: 'demo123',
     name: 'Marcus Chen', role: 'cleaner', phone: '+1 416-555-0302',
+    employeeId: 'CLN-001', assignedZoneId: 'TOR-CENTRAL', permissions: [],
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: null,
     createdAt: '2024-02-10T09:00:00Z',
   },
   {
     id: 'u4', email: 'partner@demo.com', password: 'demo123',
     name: 'James Whitfield', role: 'partner', phone: '+1 416-555-0403',
+    companyId: 'company-apex', companyCode: 'APEX-001', permissions: [],
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: 'pa1',
     createdAt: '2024-04-01T08:00:00Z',
   },
