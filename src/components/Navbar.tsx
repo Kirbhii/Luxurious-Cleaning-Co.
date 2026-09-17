@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Menu, X, Bell, ChevronDown, LogOut, User, LayoutDashboard } from 'lucide-react';
 import { useStore, useCurrentUser, useNotifications } from '../store';
+import { signOut } from '../lib/supabase';
 import logoImg from '../imports/image-3.png';
 
 export default function Navbar() {
@@ -30,7 +31,8 @@ export default function Navbar() {
     : '/portal/customer'
   ) : '/login';
 
-  function handleLogout() {
+  async function handleLogout() {
+    await signOut();
     dispatch({ type: 'LOGOUT' });
     navigate('/');
     setMenuOpen(false);

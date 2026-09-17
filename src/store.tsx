@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useEffect, type ReactNode } from 'react';
+import { supabase, fetchProfile, type ProfileRow } from './lib/supabase';
 
 export type BookingStatus =
   | 'pending' | 'confirmed' | 'cleaner_assigned'
@@ -11,7 +12,6 @@ export type MembershipTier = 'bronze' | 'silver' | 'gold';
 export interface User {
   id: string;
   email: string;
-  password: string;
   name: string;
   role: UserRole;
   phone: string;
@@ -23,6 +23,7 @@ export interface User {
   membershipTier: MembershipTier | null;
   membershipStatus: 'none' | 'active' | 'pending';
   partnerApplicationId: string | null;
+  avatarUrl?: string | null;
   createdAt: string;
 }
 
@@ -146,6 +147,7 @@ export interface ContactMessage {
 
 export interface AppState {
   currentUser: User | null;
+  authReady: boolean;          // true once the initial Supabase session check is done
   users: User[];
   bookings: Booking[];
   notifications: Notification[];
@@ -156,29 +158,52 @@ export interface AppState {
   contactMessages: ContactMessage[];
 }
 
-// Sample data
+// ─── ProfileRow → User mapper ────────────────────────────────────────────────
+// Converts the Supabase profiles table row into the app's User shape.
+
+export function profileToUser(p: ProfileRow): User {
+  return {
+    id: p.id,
+    email: p.email,
+    name: p.name,
+    role: p.role,
+    phone: p.phone,
+    employeeId: p.employee_id,
+    companyId: p.company_id,
+    companyCode: p.company_code,
+    assignedZoneId: p.assigned_zone_id,
+    permissions: p.permissions,
+    membershipTier: p.membership_tier,
+    membershipStatus: p.membership_status,
+    partnerApplicationId: p.partner_application_id,
+    avatarUrl: p.avatar_url,
+    createdAt: p.created_at,
+  };
+}
+
+// Sample data (used only when Supabase is not configured)
 const SAMPLE_USERS: User[] = [
   {
-    id: 'u1', email: 'admin@luxclean.com', password: 'admin123',
+    id: 'u1', email: 'admin@luxclean.com',
     name: 'Alexandra Morgan', role: 'admin', phone: '+1 416-555-0100',
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: null,
     createdAt: '2024-01-01T00:00:00Z',
   },
   {
-    id: 'u2', email: 'customer@demo.com', password: 'demo123',
+    id: 'u2', email: 'customer@demo.com',
     name: 'Sophie Harrington', role: 'customer', phone: '+1 416-555-0201',
     membershipTier: 'gold', membershipStatus: 'active', partnerApplicationId: null,
     createdAt: '2024-03-15T10:00:00Z',
   },
   {
-    id: 'u3', email: 'cleaner@demo.com', password: 'demo123',
+    id: 'u3', email: 'cleaner@demo.com',
     name: 'Marcus Chen', role: 'cleaner', phone: '+1 416-555-0302',
     employeeId: 'CLN-001', assignedZoneId: 'TOR-CENTRAL', permissions: [],
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: null,
     createdAt: '2024-02-10T09:00:00Z',
   },
   {
-    id: 'u4', email: 'partner@demo.com', password: 'demo123',
+    id: 'u4', email: 'partner@demo.com',
     name: 'James Whitfield', role: 'partner', phone: '+1 416-555-0403',
     companyId: 'company-apex', companyCode: 'APEX-001', permissions: [],
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: 'pa1',
@@ -446,12 +471,13 @@ const TRAINING_PROGRAMS: TrainingProgram[] = [
 
 const INITIAL_STATE: AppState = {
   currentUser: null,
-  users: SAMPLE_USERS,
-  bookings: SAMPLE_BOOKINGS,
-  notifications: SAMPLE_NOTIFICATIONS,
-  partnerApplications: SAMPLE_PARTNER_APPLICATIONS,
-  partnerProjects: SAMPLE_PARTNER_PROJECTS,
-  trainingPrograms: TRAINING_PROGRAMS,
+  authReady: false,
+  users: [],
+  bookings: [],
+  notifications: [],
+  partnerApplications: [],
+  partnerProjects: [],
+  trainingPrograms: [],
   trainingApplications: [],
   contactMessages: [],
 };
@@ -461,6 +487,8 @@ type Action =
   | { type: 'LOGIN'; payload: User }
   | { type: 'LOGOUT' }
   | { type: 'REGISTER'; payload: User }
+  | { type: 'SET_CURRENT_USER'; payload: User | null }
+  | { type: 'SET_AUTH_READY' }
   | { type: 'ADD_BOOKING'; payload: Booking }
   | { type: 'UPDATE_BOOKING'; payload: Booking }
   | { type: 'DELETE_BOOKING'; payload: string }
@@ -482,10 +510,14 @@ function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'LOAD':
       return action.payload;
+    case 'SET_AUTH_READY':
+      return { ...state, authReady: true };
+    case 'SET_CURRENT_USER':
+      return { ...state, currentUser: action.payload, authReady: true };
     case 'LOGIN':
-      return { ...state, currentUser: action.payload };
+      return { ...state, currentUser: action.payload, authReady: true };
     case 'LOGOUT':
-      return { ...state, currentUser: null };
+      return { ...state, currentUser: null, authReady: true };
     case 'REGISTER': {
       const newState = { ...state, users: [...state.users, action.payload], currentUser: action.payload };
       return newState;
@@ -547,19 +579,39 @@ export const AppContext = createContext<{
 } | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE, (init) => {
-    try {
-      const saved = localStorage.getItem('lc_state');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return init;
-  });
+  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
 
   useEffect(() => {
-    localStorage.setItem('lc_state', JSON.stringify(state));
-  }, [state]);
+    // 1. Check for an existing session immediately (e.g. page reload)
+    supabase?.auth.getSession().then(async ({ data }) => {
+      if (data.session?.user) {
+        const profile = await fetchProfile(data.session.user.id);
+        dispatch({
+          type: 'SET_CURRENT_USER',
+          payload: profile ? profileToUser(profile) : null,
+        });
+      } else {
+        dispatch({ type: 'SET_AUTH_READY' });
+      }
+    });
+
+    // 2. Subscribe to future auth changes (login, logout, token refresh)
+    const { data: listener } = supabase?.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        const profile = await fetchProfile(session.user.id);
+        dispatch({
+          type: 'SET_CURRENT_USER',
+          payload: profile ? profileToUser(profile) : null,
+        });
+      } else {
+        dispatch({ type: 'SET_CURRENT_USER', payload: null });
+      }
+    }) ?? { data: null };
+
+    return () => {
+      listener?.subscription.unsubscribe();
+    };
+  }, []);
 
   return (
     <AppContext.Provider value={{ state, dispatch }}>
@@ -576,6 +628,10 @@ export function useStore() {
 
 export function useCurrentUser() {
   return useStore().state.currentUser;
+}
+
+export function useAuthReady() {
+  return useStore().state.authReady;
 }
 
 export function useNotifications(userId: string | undefined) {
