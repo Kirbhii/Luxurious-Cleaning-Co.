@@ -11,16 +11,27 @@ const BOOKING_STATUSES: BookingStatus[] = [
   'pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'completed', 'cancelled', 'awaiting_quote',
 ];
 
+const USER_ROLE_FILTERS = ['all', 'admin', 'customer', 'cleaner', 'partner'] as const;
+const COMPANY_STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected'] as const;
+
 export default function AdminDashboard() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
   const navigate = useNavigate();
   const [tab, setTab] = useState<'overview' | 'bookings' | 'users' | 'partners' | 'training' | 'messages'>('overview');
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
+  const [userRoleFilter, setUserRoleFilter] = useState<(typeof USER_ROLE_FILTERS)[number]>('all');
+  const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
 
   const customers = state.users.filter(u => u.role === 'customer');
   const cleaners = state.users.filter(u => u.role === 'cleaner');
   const partners = state.users.filter(u => u.role === 'partner');
+  const filteredUsers = state.users.filter(u => userRoleFilter === 'all' || u.role === userRoleFilter);
+  const filteredPartnerApplications = state.partnerApplications.filter(app => {
+    if (companyStatusFilter === 'all') return true;
+    if (companyStatusFilter === 'pending') return app.status === 'submitted' || app.status === 'under_review';
+    return app.status === companyStatusFilter;
+  });
   const totalBookings = state.bookings.length;
   const pendingBookings = state.bookings.filter(b => b.status === 'pending').length;
   const activeBookings = state.bookings.filter(b => ['confirmed', 'cleaner_assigned', 'en_route', 'in_progress'].includes(b.status)).length;
@@ -324,7 +335,22 @@ export default function AdminDashboard() {
 
         {tab === 'users' && (
           <div>
-            <h2 className="font-serif text-2xl text-cream-100 mb-5">All Users</h2>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
+              <h2 className="font-serif text-2xl text-cream-100">All Users</h2>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Filter users by role">
+                {USER_ROLE_FILTERS.map(role => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setUserRoleFilter(role)}
+                    aria-pressed={userRoleFilter === role}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${userRoleFilter === role ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}
+                  >
+                    {role === 'all' ? 'All' : role}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="bg-navy-800 border border-gold-400/10 rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
@@ -335,7 +361,7 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {state.users.map(u => (
+                  {filteredUsers.map(u => (
                     <tr key={u.id} className="border-b border-gold-400/5 hover:bg-navy-700 transition-colors">
                       <td className="px-5 py-3 text-cream-100 font-medium">{u.name}</td>
                       <td className="px-5 py-3 text-cream-300">{u.email}</td>
@@ -358,15 +384,33 @@ export default function AdminDashboard() {
                   ))}
                 </tbody>
               </table>
+              {filteredUsers.length === 0 && (
+                <div className="text-center py-12 text-cream-300">No users found for this role.</div>
+              )}
             </div>
           </div>
         )}
 
         {tab === 'partners' && (
           <div>
-            <h2 className="font-serif text-2xl text-cream-100 mb-5">Partnership Applications</h2>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
+              <h2 className="font-serif text-2xl text-cream-100">Partnership Applications</h2>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Filter companies by application status">
+                {COMPANY_STATUS_FILTERS.map(status => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => setCompanyStatusFilter(status)}
+                    aria-pressed={companyStatusFilter === status}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${companyStatusFilter === status ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}
+                  >
+                    {status === 'all' ? 'All' : status === 'approved' ? 'Accepted' : status === 'pending' ? 'Pending' : 'Rejected'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="space-y-4">
-              {state.partnerApplications.map(app => (
+              {filteredPartnerApplications.map(app => (
                 <div key={app.id} className="bg-navy-800 border border-gold-400/10 rounded-xl p-5">
                   <div className="flex items-start justify-between mb-3">
                     <div>
@@ -410,6 +454,9 @@ export default function AdminDashboard() {
                   )}
                 </div>
               ))}
+              {filteredPartnerApplications.length === 0 && (
+                <div className="text-center py-12 text-cream-300">No companies found for this status.</div>
+              )}
 
               {/* Partner projects */}
               {state.partnerProjects.length > 0 && (
