@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, LogOut } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId } from '../store';
 import type { Booking, BookingStatus } from '../store';
+import ConfirmModal from '../components/ConfirmModal';
 
 const SAMPLE_PHOTOS = [
   'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=400&fit=crop&auto=format',
@@ -35,6 +36,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
   const [note, setNote] = useState(booking.cleanerNotes);
   const [photoType, setPhotoType] = useState<'before' | 'progress' | 'after'>('progress');
   const [saving, setSaving] = useState(false);
+  const [confirmation, setConfirmation] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
 
   const nextStatus = STATUS_TRANSITIONS[booking.status];
 
@@ -72,12 +74,30 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
     }, 800);
   }
 
+  function requestStatusUpdate(newStatus: BookingStatus) {
+    setConfirmation({
+      title: 'Update job status?',
+      message: `This will mark the job as ${STATUS_LABELS[newStatus]}.`,
+      confirmLabel: 'Update',
+      onConfirm: () => { updateStatus(newStatus); setConfirmation(null); },
+    });
+  }
+
   function saveNotes() {
     setSaving(true);
     setTimeout(() => {
       dispatch({ type: 'UPDATE_BOOKING', payload: { ...booking, cleanerNotes: note, updatedAt: new Date().toISOString() } });
       setSaving(false);
     }, 500);
+  }
+
+  function requestSaveNotes() {
+    setConfirmation({
+      title: 'Save notes?',
+      message: 'Your notes will be added to this booking for the customer and admin to review.',
+      confirmLabel: 'Save',
+      onConfirm: () => { saveNotes(); setConfirmation(null); },
+    });
   }
 
   function uploadPhoto() {
@@ -115,8 +135,18 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
     }, 800);
   }
 
+  function requestUploadPhoto() {
+    setConfirmation({
+      title: 'Upload photo?',
+      message: `Add this ${photoType} photo update to the booking?`,
+      confirmLabel: 'Upload',
+      onConfirm: () => { uploadPhoto(); setConfirmation(null); },
+    });
+  }
+
   return (
     <div className="bg-navy-800 border border-gold-400/10 rounded-xl overflow-hidden">
+      {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       <div className="p-5">
         <div className="flex items-start justify-between mb-3">
           <div>
@@ -159,7 +189,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
 
         {nextStatus && (
           <button
-            onClick={() => updateStatus(nextStatus)}
+            onClick={() => requestStatusUpdate(nextStatus)}
             disabled={saving}
             className="w-full bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold py-2.5 rounded-lg transition-colors disabled:opacity-60"
           >
@@ -200,7 +230,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
               ))}
             </div>
             <button
-              onClick={uploadPhoto}
+                onClick={requestUploadPhoto}
               disabled={saving}
               className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
             >
@@ -230,7 +260,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
               className="w-full bg-navy-700 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/40 resize-none"
             />
             <button
-              onClick={saveNotes}
+              onClick={requestSaveNotes}
               disabled={saving}
               className="flex items-center gap-2 mt-2 text-sm bg-navy-700 hover:bg-navy-600 border border-gold-400/20 text-cream-200 px-4 py-2 rounded-lg transition-colors disabled:opacity-60"
             >
@@ -307,7 +337,7 @@ export default function CleanerPortal() {
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-8">
+      <div className="max-w-5xl mx-auto px-6 py-8 min-h-[36rem]">
         <div className="space-y-5">
           {tab === 'active' ? (
             active.length === 0 ? (

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId } from '../store';
 import type { BookingStatus, PartnerApplication } from '../store';
+import ConfirmModal from '../components/ConfirmModal';
 
 const BOOKING_STATUSES: BookingStatus[] = [
   'pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'completed', 'cancelled', 'awaiting_quote',
@@ -22,6 +23,12 @@ export default function AdminDashboard() {
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [userRoleFilter, setUserRoleFilter] = useState<(typeof USER_ROLE_FILTERS)[number]>('all');
   const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const customers = state.users.filter(u => u.role === 'customer');
   const cleaners = state.users.filter(u => u.role === 'cleaner');
@@ -47,9 +54,16 @@ export default function AdminDashboard() {
   }
 
   function deleteBooking(bookingId: string) {
-    if (window.confirm('Delete this booking permanently?')) {
-      dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
-    }
+    dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
+  }
+
+  function requestDeleteBooking(bookingId: string) {
+    setConfirmation({
+      title: 'Delete booking?',
+      message: 'Are you sure you want to delete this booking? This action cannot be undone.',
+      confirmLabel: 'Delete',
+      onConfirm: () => { deleteBooking(bookingId); setConfirmation(null); },
+    });
   }
 
   function updateBookingStatus(bookingId: string, newStatus: BookingStatus, cleanerId?: string) {
@@ -81,6 +95,15 @@ export default function AdminDashboard() {
         link: '/portal/customer',
         createdAt: new Date().toISOString(),
       },
+    });
+  }
+
+  function requestBookingStatus(bookingId: string, newStatus: BookingStatus) {
+    setConfirmation({
+      title: 'Update booking status?',
+      message: `This will change the booking status to ${STATUS_LABELS[newStatus]}.`,
+      confirmLabel: 'Update',
+      onConfirm: () => { updateBookingStatus(bookingId, newStatus); setConfirmation(null); },
     });
   }
 
@@ -131,6 +154,16 @@ export default function AdminDashboard() {
     }
   }
 
+  function requestAssignCleaner(bookingId: string, cleanerId: string) {
+    const cleaner = state.users.find(account => account.id === cleanerId);
+    setConfirmation({
+      title: 'Assign cleaner?',
+      message: `${cleaner?.name || 'This cleaner'} will be assigned to the booking.`,
+      confirmLabel: 'Assign',
+      onConfirm: () => { assignCleaner(bookingId, cleanerId); setConfirmation(null); },
+    });
+  }
+
   function updatePartnerApp(app: PartnerApplication, status: PartnerApplication['status']) {
     const updated = { ...app, status };
     dispatch({ type: 'UPDATE_PARTNER_APP', payload: updated });
@@ -152,23 +185,49 @@ export default function AdminDashboard() {
     }
   }
 
-  const STATS = [
-    { label: 'Total Bookings', value: totalBookings, icon: CalendarCheck, color: 'text-blue-400' },
-    { label: 'Pending', value: pendingBookings, icon: CalendarCheck, color: 'text-amber-400' },
-    { label: 'Active', value: activeBookings, icon: CalendarCheck, color: 'text-purple-400' },
-    { label: 'Completed', value: completedBookings, icon: CheckCircle2, color: 'text-emerald-400' },
-    { label: 'Customers', value: customers.length, icon: Users, color: 'text-cream-300' },
-    { label: 'Active Members', value: activeMembers, icon: Users, color: 'text-gold-400' },
-    { label: 'Cleaners', value: cleaners.length, icon: UserCog, color: 'text-sky-400' },
-    { label: 'Partners', value: partners.length, icon: Briefcase, color: 'text-violet-400' },
-    { label: 'Partner Leads', value: pendingApps, icon: Briefcase, color: 'text-orange-400' },
-    { label: 'Training Apps', value: trainingApps, icon: GraduationCap, color: 'text-teal-400' },
-    { label: 'Messages', value: state.contactMessages.length, icon: MessageSquare, color: 'text-pink-400' },
-    { label: 'Unread Msgs', value: unreadMessages, icon: MessageSquare, color: 'text-red-400' },
+  function requestPartnerUpdate(app: PartnerApplication, status: PartnerApplication['status']) {
+    const action = status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : 'move under review';
+    setConfirmation({
+      title: `${action.charAt(0).toUpperCase() + action.slice(1)} application?`,
+      message: `${app.companyName}'s partnership application will be updated.`,
+      confirmLabel: status === 'rejected' ? 'Reject' : 'Update',
+      onConfirm: () => { updatePartnerApp(app, status); setConfirmation(null); },
+    });
+  }
+
+  const STAT_GROUPS = [
+    {
+      label: 'Booking Performance',
+      stats: [
+        { label: 'All bookings', value: totalBookings, icon: CalendarCheck, color: 'text-blue-400' },
+        { label: 'Awaiting action', value: pendingBookings, icon: CalendarCheck, color: 'text-amber-400' },
+        { label: 'In service', value: activeBookings, icon: CalendarCheck, color: 'text-purple-400' },
+        { label: 'Completed bookings', value: completedBookings, icon: CheckCircle2, color: 'text-emerald-400' },
+      ],
+    },
+    {
+      label: 'Users & Membership',
+      stats: [
+        { label: 'Registered customers', value: customers.length, icon: Users, color: 'text-cream-300' },
+        { label: 'Active memberships', value: activeMembers, icon: Users, color: 'text-gold-400' },
+        { label: 'Available cleaners', value: cleaners.length, icon: UserCog, color: 'text-sky-400' },
+        { label: 'Partner accounts', value: partners.length, icon: Briefcase, color: 'text-violet-400' },
+      ],
+    },
+    {
+      label: 'Operations & Communication',
+      stats: [
+        { label: 'Pending applications', value: pendingApps, icon: Briefcase, color: 'text-orange-400' },
+        { label: 'Training applications', value: trainingApps, icon: GraduationCap, color: 'text-teal-400' },
+        { label: 'Total messages', value: state.contactMessages.length, icon: MessageSquare, color: 'text-pink-400' },
+        { label: 'Unread messages', value: unreadMessages, icon: MessageSquare, color: 'text-red-400' },
+      ],
+    },
   ];
 
   return (
     <div className="min-h-screen bg-navy-950">
+      {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex items-start justify-between gap-4 mb-5">
@@ -208,15 +267,25 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-6 py-8 min-h-[36rem]">
         {tab === 'overview' && (
           <div>
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
-              {STATS.map(stat => (
-                <div key={stat.label} className="bg-navy-800 border border-gold-400/10 rounded-xl p-4">
-                  <div className={`text-2xl font-semibold ${stat.color} mb-0.5`}>{stat.value}</div>
-                  <div className="text-xs text-cream-300">{stat.label}</div>
-                </div>
+            <div className="space-y-8">
+              {STAT_GROUPS.map(group => (
+                <section key={group.label}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <h2 className="text-xs text-gold-400 uppercase tracking-[0.18em] font-medium">{group.label}</h2>
+                    <div className="h-px flex-1 bg-gold-400/10" />
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {group.stats.map(stat => (
+                      <div key={stat.label} className="bg-navy-800 border border-gold-400/10 rounded-xl p-4 min-h-[5.25rem]">
+                        <div className={`text-2xl font-semibold ${stat.color} mb-0.5`}>{stat.value}</div>
+                        <div className="text-xs text-cream-300">{stat.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
 
@@ -298,7 +367,7 @@ export default function AdminDashboard() {
                       {/* Status change */}
                       <select
                         value={b.status}
-                        onChange={e => updateBookingStatus(b.id, e.target.value as BookingStatus)}
+                        onChange={e => requestBookingStatus(b.id, e.target.value as BookingStatus)}
                         className="bg-navy-700 border border-gold-400/15 text-cream-100 text-xs rounded-lg px-3 py-2 focus:outline-none"
                       >
                         {BOOKING_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
@@ -307,7 +376,7 @@ export default function AdminDashboard() {
                       {/* Assign cleaner */}
                       <select
                         value={b.cleanerId || ''}
-                        onChange={e => e.target.value && assignCleaner(b.id, e.target.value)}
+                        onChange={e => e.target.value && requestAssignCleaner(b.id, e.target.value)}
                         className="bg-navy-700 border border-gold-400/15 text-cream-100 text-xs rounded-lg px-3 py-2 focus:outline-none"
                       >
                         <option value="">Assign cleaner…</option>
@@ -319,7 +388,7 @@ export default function AdminDashboard() {
                           Assigned: <span className="text-cream-100">{assignedCleaner.name}</span>
                         </span>
                       )}
-                      <button onClick={() => deleteBooking(b.id)} className="inline-flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 border border-red-400/20 hover:border-red-400/40 px-3 py-2 rounded-lg transition-colors">
+                      <button onClick={() => requestDeleteBooking(b.id)} className="inline-flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 border border-red-400/20 hover:border-red-400/40 px-3 py-2 rounded-lg transition-colors">
                         <Trash2 size={13} /> Delete
                       </button>
                     </div>
@@ -433,19 +502,19 @@ export default function AdminDashboard() {
                   {(app.status === 'submitted' || app.status === 'under_review') && (
                     <div className="flex gap-3">
                       <button
-                        onClick={() => updatePartnerApp(app, 'under_review')}
+                        onClick={() => requestPartnerUpdate(app, 'under_review')}
                         className="flex items-center gap-1.5 text-xs border border-amber-400/30 text-amber-400 px-3 py-1.5 rounded-lg hover:bg-amber-400/10 transition-colors"
                       >
                         Mark Under Review
                       </button>
                       <button
-                        onClick={() => updatePartnerApp(app, 'approved')}
+                        onClick={() => requestPartnerUpdate(app, 'approved')}
                         className="flex items-center gap-1.5 text-xs bg-emerald-400/15 border border-emerald-400/30 text-emerald-400 px-3 py-1.5 rounded-lg hover:bg-emerald-400/25 transition-colors"
                       >
                         <CheckCircle2 size={12} />Approve
                       </button>
                       <button
-                        onClick={() => updatePartnerApp(app, 'rejected')}
+                        onClick={() => requestPartnerUpdate(app, 'rejected')}
                         className="flex items-center gap-1.5 text-xs bg-red-400/10 border border-red-400/25 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-400/20 transition-colors"
                       >
                         <XCircle size={12} />Reject

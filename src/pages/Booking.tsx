@@ -218,7 +218,7 @@ export default function Booking() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-6 py-10">
+      <div className="max-w-3xl mx-auto px-6 py-10 min-h-[42rem]">
         {/* Step 1: Service */}
         {step === 'service' && (
           <div>

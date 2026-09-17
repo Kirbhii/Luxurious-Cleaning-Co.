@@ -181,7 +181,7 @@ export default function PartnerPortal() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 min-h-[36rem]">
         {tab === 'overview' && (
           <div className="space-y-6">
             <div className="bg-navy-800 border border-gold-400/15 rounded-xl p-6">

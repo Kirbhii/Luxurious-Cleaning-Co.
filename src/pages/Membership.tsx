@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CheckCircle2, ArrowRight, Crown, Zap } from 'lucide-react';
 import { useStore, useCurrentUser, type MembershipTier } from '../store';
+import ConfirmModal from '../components/ConfirmModal';
 
 const TIERS = [
   {
@@ -59,6 +60,7 @@ export default function Membership() {
   const navigate = useNavigate();
   const [applying, setApplying] = useState<MembershipTier | null>(null);
   const [success, setSuccess] = useState<MembershipTier | null>(null);
+  const [confirmation, setConfirmation] = useState<MembershipTier | null>(null);
 
   function handleApply(tier: MembershipTier) {
     if (!user) {
@@ -73,8 +75,21 @@ export default function Membership() {
     }, 1200);
   }
 
+  function requestApply(tier: MembershipTier) {
+    setConfirmation(tier);
+  }
+
   return (
     <div className="pt-16 min-h-screen bg-navy-950">
+      {confirmation && (
+        <ConfirmModal
+          title={`Join ${confirmation} membership?`}
+          message={`Your membership will be activated and your account will receive the ${confirmation} benefits.`}
+          confirmLabel="Confirm"
+          onConfirm={() => { handleApply(confirmation); setConfirmation(null); }}
+          onCancel={() => setConfirmation(null)}
+        />
+      )}
       {/* Header */}
       <section className="py-20 bg-navy-900 border-b border-gold-400/10">
         <div className="max-w-7xl mx-auto px-6 text-center">
@@ -139,7 +154,7 @@ export default function Membership() {
                   </div>
                 ) : (
                   <button
-                    onClick={() => handleApply(tier.id)}
+                    onClick={() => requestApply(tier.id)}
                     disabled={applying === tier.id}
                     className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold transition-colors ${
                       tier.id === 'gold'

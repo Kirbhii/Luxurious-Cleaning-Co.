@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS } from '../store';
 import type { Booking } from '../store';
+import ConfirmModal from '../components/ConfirmModal';
 
 const STATUS_ORDER = [
   { key: 'pending', label: 'Pending' },
@@ -144,6 +145,12 @@ export default function CustomerPortal() {
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [profileForm, setProfileForm] = useState({ name: user.name, email: user.email, phone: user.phone });
   const [profileMessage, setProfileMessage] = useState('');
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const myBookings = state.bookings.filter(b => b.customerId === user.id);
   const myNotifications = state.notifications.filter(n => n.userId === user.id);
@@ -165,9 +172,16 @@ export default function CustomerPortal() {
   }
 
   function deleteBooking(bookingId: string) {
-    if (window.confirm('Delete this booking permanently?')) {
-      dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
-    }
+    dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
+  }
+
+  function requestDeleteBooking(bookingId: string) {
+    setConfirmation({
+      title: 'Delete booking?',
+      message: 'Are you sure you want to delete this booking? This action cannot be undone.',
+      confirmLabel: 'Delete',
+      onConfirm: () => { deleteBooking(bookingId); setConfirmation(null); },
+    });
   }
 
   function handleProfileSave(e: React.FormEvent) {
@@ -182,20 +196,29 @@ export default function CustomerPortal() {
       setProfileMessage('That email is already in use.');
       return;
     }
-    dispatch({
-      type: 'UPDATE_USER_PROFILE',
-      payload: {
-        userId: user.id,
-        name: profileForm.name.trim(),
-        email: profileForm.email.trim(),
-        phone: profileForm.phone.trim(),
+    setConfirmation({
+      title: 'Save profile changes?',
+      message: 'Your name, email, and phone number will be updated.',
+      confirmLabel: 'Save',
+      onConfirm: () => {
+        dispatch({
+          type: 'UPDATE_USER_PROFILE',
+          payload: {
+            userId: user.id,
+            name: profileForm.name.trim(),
+            email: profileForm.email.trim(),
+            phone: profileForm.phone.trim(),
+          },
+        });
+        setProfileMessage('Profile updated successfully.');
+        setConfirmation(null);
       },
     });
-    setProfileMessage('Profile updated successfully.');
   }
 
   return (
     <div className="min-h-screen bg-navy-950">
+      {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       {/* Header */}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-7xl mx-auto px-6 py-6 flex flex-wrap items-start justify-between gap-4">
@@ -265,7 +288,7 @@ export default function CustomerPortal() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-6 py-8 min-h-[36rem]">
         {activeTab === 'bookings' && (
           <div>
             <div className="flex flex-wrap gap-2 mb-6">
@@ -279,7 +302,7 @@ export default function CustomerPortal() {
               <div className="mb-8">
                 <div className="text-xs text-gold-400 uppercase tracking-wider font-medium mb-4">Upcoming & Active</div>
                 <div className="space-y-4">
-                  {upcoming.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} onDelete={['pending', 'cancelled'].includes(b.status) ? () => deleteBooking(b.id) : undefined} />)}
+                  {upcoming.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} onDelete={['pending', 'cancelled'].includes(b.status) ? () => requestDeleteBooking(b.id) : undefined} />)}
                 </div>
               </div>
             )}
@@ -295,7 +318,7 @@ export default function CustomerPortal() {
               <div>
                 <div className="text-xs text-cream-300/60 uppercase tracking-wider font-medium mb-4">Cancelled</div>
                 <div className="space-y-4">
-                  {cancelled.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} onDelete={() => deleteBooking(b.id)} />)}
+                  {cancelled.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} onDelete={() => requestDeleteBooking(b.id)} />)}
                 </div>
               </div>
             )}

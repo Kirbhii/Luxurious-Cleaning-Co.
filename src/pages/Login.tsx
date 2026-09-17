@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, ArrowRight } from 'lucide-react';
 import { useStore, genId } from '../store';
 import type { User, UserRole } from '../store';
@@ -9,12 +9,14 @@ import loginImage from '../imports/login-cleaning.jpg';
 export default function Login() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(searchParams.get('mode') === 'register' ? 'register' : 'login');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [loginRole, setLoginRole] = useState<UserRole>('customer');
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [regForm, setRegForm] = useState({
     name: '', email: '', phone: '', password: '', confirmPassword: '',
@@ -26,7 +28,7 @@ export default function Login() {
     setError('');
     setLoading(true);
     setTimeout(() => {
-      const user = state.users.find(u => u.email === loginForm.email && u.password === loginForm.password);
+      const user = state.users.find(u => u.email === loginForm.email && u.password === loginForm.password && u.role === loginRole);
       if (user) {
         dispatch({ type: 'LOGIN', payload: user });
         const portal = user.role === 'admin' ? '/portal/admin'
@@ -72,12 +74,8 @@ export default function Login() {
     }, 800);
   }
 
-  const demoAccounts = [
-    { label: 'Admin', email: 'admin@luxclean.com', password: 'admin123' },
-    { label: 'Customer', email: 'customer@demo.com', password: 'demo123' },
-    { label: 'Cleaner', email: 'cleaner@demo.com', password: 'demo123' },
-    { label: 'Partner', email: 'partner@demo.com', password: 'demo123' },
-  ];
+  const loginEmailLabel = loginRole === 'partner' ? 'Corporate email address' : 'Email';
+  const loginEmailPlaceholder = loginRole === 'partner' ? 'company@example.com' : 'you@example.com';
 
   return (
     <div className="min-h-screen bg-navy-950 flex">
@@ -96,7 +94,7 @@ export default function Login() {
       </div>
 
       {/* Form panel */}
-      <div className="flex-1 flex flex-col justify-center px-8 md:px-12 lg:max-w-md xl:max-w-lg">
+      <div className="h-screen flex-1 flex flex-col justify-start overflow-y-auto px-8 py-8 md:px-12 md:py-12 lg:max-w-md xl:max-w-lg">
         <div className="mb-8">
           <Link to="/" className="flex items-center self-start -ml-2 mb-10 translate-y-6">
             <img src={logoImg} alt="Luxurious Cleaning Co." className="h-10 w-auto object-contain" />
@@ -107,22 +105,6 @@ export default function Login() {
           <p className="text-sm text-cream-300">
             {mode === 'login' ? "Sign in to your portal" : "Join to book, track, and manage your services"}
           </p>
-        </div>
-
-        {/* Demo accounts */}
-        <div className="bg-navy-800 border border-gold-400/15 rounded-xl p-4 mb-6">
-          <div className="text-xs text-cream-300/70 mb-2 font-medium">Demo accounts (click to fill):</div>
-          <div className="flex flex-wrap gap-2">
-            {demoAccounts.map(acc => (
-              <button
-                key={acc.label}
-                onClick={() => { setLoginForm({ email: acc.email, password: acc.password }); setMode('login'); }}
-                className="text-xs px-3 py-1 rounded-full bg-gold-400/10 border border-gold-400/25 text-gold-400 hover:bg-gold-400/20 transition-colors"
-              >
-                {acc.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Tab switcher */}
@@ -150,13 +132,26 @@ export default function Login() {
         {mode === 'login' ? (
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-xs text-cream-300 mb-1.5">Email</label>
+              <label className="block text-xs text-cream-300 mb-1.5">Account type</label>
+              <select
+                value={loginRole}
+                onChange={e => { setLoginRole(e.target.value as UserRole); setError(''); }}
+                className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-3 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
+              >
+                <option value="customer">Customer</option>
+                <option value="partner">Partnered company</option>
+                <option value="cleaner">Cleaner</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-cream-300 mb-1.5">{loginEmailLabel}</label>
               <input
                 required type="email"
                 value={loginForm.email}
                 onChange={e => setLoginForm(f => ({ ...f, email: e.target.value }))}
                 className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-3 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/40"
-                placeholder="you@example.com"
+                placeholder={loginEmailPlaceholder}
               />
             </div>
             <div className="relative">
@@ -198,7 +193,9 @@ export default function Login() {
                 <label className="block text-xs text-cream-300 mb-1.5">Account Type</label>
                 <select value={regForm.role} onChange={e => setRegForm(f => ({ ...f, role: e.target.value as UserRole }))} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40">
                   <option value="customer">Customer</option>
-                  <option value="partner">Business Partner</option>
+                  <option value="partner">Partner</option>
+                  <option value="cleaner">Cleaner</option>
+                  <option value="admin">Admin</option>
                 </select>
               </div>
               <div className="relative">

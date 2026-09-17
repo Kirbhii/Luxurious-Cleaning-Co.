@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, Star, CheckCircle2, ChevronDown, ChevronUp,
-  Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare,
+  Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare, X,
 } from 'lucide-react';
 import logoImg from '../imports/image-3.png';
+import { useCurrentUser } from '../store';
 
 /* ─── image constants ─────────────────────────────────────────── */
 const IMG = {
@@ -182,9 +183,68 @@ function FeatureBlock({
 /* ─── Main component ─────────────────────────────────────────── */
 export default function Home() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const user = useCurrentUser();
+  const navigate = useNavigate();
+
+  function handleLandingInteraction(event: React.MouseEvent<HTMLDivElement>) {
+    if (user) return;
+    const target = event.target as HTMLElement;
+    const interactive = target.closest('a, button');
+    if (!interactive || interactive.hasAttribute('data-auth-exempt')) return;
+    event.preventDefault();
+    setAuthPromptOpen(true);
+  }
 
   return (
-    <div className="pt-16">
+    <div className="pt-16" onClickCapture={handleLandingInteraction}>
+      {authPromptOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-5 backdrop-blur-sm"
+          onClick={() => setAuthPromptOpen(false)}
+          data-auth-exempt
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auth-prompt-title"
+            className="relative w-full max-w-md rounded-2xl border border-gold-400/30 bg-navy-900 px-7 py-8 text-center shadow-2xl"
+            onClick={event => event.stopPropagation()}
+            data-auth-exempt
+          >
+            <button
+              type="button"
+              aria-label="Close sign in prompt"
+              onClick={() => setAuthPromptOpen(false)}
+              className="absolute right-4 top-4 text-cream-300 hover:text-cream-100"
+              data-auth-exempt
+            >
+              <X size={18} />
+            </button>
+            <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-5 h-10 w-auto object-contain" />
+            <h2 id="auth-prompt-title" className="font-serif text-2xl text-cream-100 mb-2">Welcome to Luxurious Cleaning Co.</h2>
+            <p className="text-sm leading-relaxed text-cream-300 mb-7">Please sign in to continue, or create an account to get started.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/login')}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-4 py-3 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300"
+                data-auth-exempt
+              >
+                Log In 
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/login?mode=register')}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-gold-400/40 px-4 py-3 text-sm font-semibold text-gold-400 transition-colors hover:bg-gold-400/10"
+                data-auth-exempt
+              >
+                Sign Up 
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══ HERO ══════════════════════════════════════════════════ */}
       <section className="relative min-h-screen flex flex-col">
