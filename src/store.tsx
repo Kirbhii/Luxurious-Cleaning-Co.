@@ -1,8 +1,20 @@
-import { createContext, useContext, useReducer, useEffect, type ReactNode } from 'react';
-import { supabase, fetchProfile, type ProfileRow } from './lib/supabase';
+import { createContext, useContext, useReducer, useEffect, useRef, type ReactNode } from 'react';
+import {
+  supabase,
+  fetchProfile,
+  fetchTrainingPrograms,
+  fetchTrainingApplications,
+  fetchPartnerApplications,
+  fetchBookingsFromDb,
+  fetchNotificationsFromDb,
+  fetchContactMessages,
+  fetchPartnerProjects,
+  insertNotification,
+  type ProfileRow,
+} from './lib/supabase';
 
 export type BookingStatus =
-  | 'pending' | 'confirmed' | 'cleaner_assigned'
+  | 'awaiting_review' | 'rejected' | 'pending' | 'confirmed' | 'cleaner_assigned'
   | 'en_route' | 'in_progress' | 'completed'
   | 'cancelled' | 'rescheduled' | 'awaiting_quote';
 
@@ -20,6 +32,9 @@ export interface User {
   companyCode?: string | null;
   assignedZoneId?: string | null;
   permissions?: string[];
+  // NOTE: pin_hash is deliberately NOT part of the client-side user model.
+  // It is server-only (migration 007 revokes column SELECT from clients) and
+  // PIN verification happens via the verify_user_pin() RPC.
   membershipTier: MembershipTier | null;
   membershipStatus: 'none' | 'active' | 'pending';
   partnerApplicationId: string | null;
@@ -34,6 +49,8 @@ export interface TimelineEvent {
   timestamp: string;
   actor: string;
 }
+
+export type BookingPriority = 'normal' | 'high' | 'urgent';
 
 export interface Booking {
   id: string;
@@ -64,6 +81,10 @@ export interface Booking {
   timeline: TimelineEvent[];
   createdAt: string;
   updatedAt: string;
+  /** Membership benefit wiring — optional so legacy/seed rows keep working. */
+  priority?: BookingPriority;
+  memberTier?: MembershipTier | null;
+  discountPercent?: number;
 }
 
 export interface Notification {
@@ -92,6 +113,9 @@ export interface PartnerApplication {
   proposal: string;
   status: 'submitted' | 'under_review' | 'approved' | 'rejected';
   createdAt: string;
+  resumeName?: string | null;
+  resumeUrl?: string | null;
+  companyId?: string | null;
 }
 
 export interface PartnerProject {
@@ -132,6 +156,8 @@ export interface TrainingApplication {
   experience: string;
   status: 'submitted' | 'under_review' | 'accepted' | 'scheduled' | 'completed' | 'rejected';
   createdAt: string;
+  resumeName?: string | null;
+  resumeUrl?: string | null;
 }
 
 export interface ContactMessage {
@@ -185,26 +211,26 @@ export function profileToUser(p: ProfileRow): User {
 const SAMPLE_USERS: User[] = [
   {
     id: 'u1', email: 'admin@luxclean.com',
-    name: 'Alexandra Morgan', role: 'admin', phone: '+1 416-555-0100',
+    name: 'Alexandra Morgan', role: 'admin', phone: '0919 002 4100',
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: null,
     createdAt: '2024-01-01T00:00:00Z',
   },
   {
     id: 'u2', email: 'customer@demo.com',
-    name: 'Sophie Harrington', role: 'customer', phone: '+1 416-555-0201',
+    name: 'Sophie Harrington', role: 'customer', phone: '0919 002 4201',
     membershipTier: 'gold', membershipStatus: 'active', partnerApplicationId: null,
     createdAt: '2024-03-15T10:00:00Z',
   },
   {
     id: 'u3', email: 'cleaner@demo.com',
-    name: 'Marcus Chen', role: 'cleaner', phone: '+1 416-555-0302',
-    employeeId: 'CLN-001', assignedZoneId: 'TOR-CENTRAL', permissions: [],
+    name: 'Marcus Chen', role: 'cleaner', phone: '0919 002 4302',
+    employeeId: 'CLN-001', assignedZoneId: 'SJC-CENTRAL', permissions: [],
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: null,
     createdAt: '2024-02-10T09:00:00Z',
   },
   {
     id: 'u4', email: 'partner@demo.com',
-    name: 'James Whitfield', role: 'partner', phone: '+1 416-555-0403',
+    name: 'James Whitfield', role: 'partner', phone: '0919 002 4403',
     companyId: 'company-apex', companyCode: 'APEX-001', permissions: [],
     membershipTier: null, membershipStatus: 'none', partnerApplicationId: 'pa1',
     createdAt: '2024-04-01T08:00:00Z',
@@ -219,8 +245,8 @@ const SAMPLE_BOOKINGS: Booking[] = [
     status: 'in_progress',
     date: '2025-09-12',
     time: '09:00',
-    address: '142 Rosedale Heights Dr',
-    city: 'Toronto, ON',
+    address: '31 Annapolis Street',
+    city: 'San Juan City, Metro Manila',
     propertyType: 'Condo',
     bedrooms: 2,
     bathrooms: 2,
@@ -258,8 +284,8 @@ const SAMPLE_BOOKINGS: Booking[] = [
     status: 'completed',
     date: '2025-08-28',
     time: '10:00',
-    address: '142 Rosedale Heights Dr',
-    city: 'Toronto, ON',
+    address: '31 Annapolis Street',
+    city: 'San Juan City, Metro Manila',
     propertyType: 'Condo',
     bedrooms: 2,
     bathrooms: 2,
@@ -292,8 +318,8 @@ const SAMPLE_BOOKINGS: Booking[] = [
     status: 'pending',
     date: '2025-09-20',
     time: '08:00',
-    address: '88 Bloor St W, Suite 901',
-    city: 'Toronto, ON',
+    address: '17 Eisenhower St, Greenhills, Suite 901',
+    city: 'San Juan City, Metro Manila',
     propertyType: 'Condo',
     bedrooms: 3,
     bathrooms: 2,
@@ -362,9 +388,9 @@ const SAMPLE_PARTNER_APPLICATIONS: PartnerApplication[] = [
     contactPerson: 'James Whitfield',
     position: 'Operations Director',
     email: 'partner@demo.com',
-    phone: '+1 416-555-0403',
-    website: 'https://apexconstruction.ca',
-    address: '500 King St W, Toronto, ON',
+    phone: '0919 002 4403',
+    website: 'https://apexconstruction.ph',
+    address: 'Atlanta Centre, 31 Annapolis St, San Juan City, Metro Manila',
     servicesRequired: 'Post-Construction Cleaning, Commercial Cleaning',
     estimatedVolume: '8–12 projects per year',
     proposal: 'We complete 10+ high-rise residential and commercial projects annually and require reliable post-construction cleaning after each handover.',
@@ -377,10 +403,10 @@ const SAMPLE_PARTNER_APPLICATIONS: PartnerApplication[] = [
     industry: 'Real Estate',
     contactPerson: 'Patricia Wells',
     position: 'Property Manager',
-    email: 'pwells@meridianrealty.ca',
-    phone: '+1 416-555-0512',
-    website: 'https://meridianrealty.ca',
-    address: '220 Bay St, Toronto, ON',
+    email: 'pwells@meridianrealty.ph',
+    phone: '0919 002 4512',
+    website: 'https://meridianrealty.ph',
+    address: '128 Ortigas Ave, San Juan City, Metro Manila',
     servicesRequired: 'Move-In/Move-Out, Residential Cleaning',
     estimatedVolume: '20–30 units per month',
     proposal: 'We manage 400+ residential units and need a premium cleaning partner for tenant turnovers.',
@@ -393,7 +419,7 @@ const SAMPLE_PARTNER_PROJECTS: PartnerProject[] = [
   {
     id: 'pp1', partnerId: 'pa1',
     name: 'Harbour Point Residences — Tower A',
-    address: '1 Harbour Square, Toronto, ON',
+    address: '22 Wilson St, Greenhills, San Juan City, Metro Manila',
     size: '45,000 sq ft',
     units: '120 units, 32 floors',
     turnoverDate: '2025-10-01',
@@ -406,7 +432,7 @@ const SAMPLE_PARTNER_PROJECTS: PartnerProject[] = [
   {
     id: 'pp2', partnerId: 'pa1',
     name: 'Midtown Lofts Phase 2',
-    address: '840 St Clair Ave W, Toronto, ON',
+    address: '45 Aurora Blvd, San Juan City, Metro Manila',
     size: '18,000 sq ft',
     units: '48 loft units',
     turnoverDate: '2025-11-15',
@@ -423,8 +449,8 @@ const TRAINING_PROGRAMS: TrainingProgram[] = [
     id: 'tp1',
     name: 'Professional Cleaning Fundamentals',
     description: 'The essential foundation for all cleaning professionals. Covers techniques, products, and professional standards expected by Luxurious Cleaning Co.',
-    requirements: 'No prior experience required. Must be 18+ and able to lift 25 lbs.',
-    duration: '2 days (16 hours)',
+    requirements: 'No prior experience required. Must be 18+ and able to lift 11 kg.',
+    duration: '30 days (120 hours)',
     objectives: ['Master residential cleaning techniques', 'Understand product safety and usage', 'Build professional client interaction skills', 'Learn quality inspection standards'],
     schedule: 'Monthly — first Monday & Tuesday',
     slots: 12,
@@ -436,36 +462,36 @@ const TRAINING_PROGRAMS: TrainingProgram[] = [
     name: 'Deep Cleaning Techniques',
     description: 'Advanced deep-cleaning methods for tackling the most demanding residential and commercial environments.',
     requirements: 'Completion of Fundamentals or 6 months cleaning experience.',
-    duration: '1 day (8 hours)',
+    duration: '15 days (60 hours)',
     objectives: ['Advanced degreasing and disinfection', 'Appliance and oven deep cleaning', 'Grout and tile restoration', 'Odour elimination methods'],
     schedule: 'Bi-monthly — third Saturday',
     slots: 10,
     slotsAvailable: 7,
-    price: 95,
+    price: 4500,
   },
   {
     id: 'tp3',
     name: 'Post-Construction Cleaning',
     description: 'Specialized training for post-construction environments including debris handling, surface care, and site safety.',
     requirements: 'Deep Cleaning Techniques certification required.',
-    duration: '3 days (24 hours)',
+    duration: '45 days (180 hours)',
     objectives: ['Construction debris and hazardous material awareness', 'Protecting high-end surfaces and finishes', 'Window and glass cleaning techniques', 'Final inspection protocols for developers'],
     schedule: 'Quarterly',
     slots: 8,
     slotsAvailable: 3,
-    price: 195,
+    price: 8500,
   },
   {
     id: 'tp4',
     name: 'Commercial & Office Cleaning',
     description: 'Professional training for commercial environments, with a focus on minimal disruption and security protocols.',
     requirements: 'Fundamentals certification.',
-    duration: '1 day (8 hours)',
+    duration: '30 days (120 hours)',
     objectives: ['After-hours cleaning protocols', 'Office equipment safety', 'High-traffic area maintenance', 'Client confidentiality and access controls'],
     schedule: 'Monthly — second Wednesday',
     slots: 15,
     slotsAvailable: 9,
-    price: 75,
+    price: 3500,
   },
 ];
 
@@ -477,7 +503,7 @@ const INITIAL_STATE: AppState = {
   notifications: [],
   partnerApplications: [],
   partnerProjects: [],
-  trainingPrograms: [],
+  trainingPrograms: TRAINING_PROGRAMS,
   trainingApplications: [],
   contactMessages: [],
 };
@@ -489,6 +515,7 @@ type Action =
   | { type: 'REGISTER'; payload: User }
   | { type: 'SET_CURRENT_USER'; payload: User | null }
   | { type: 'SET_AUTH_READY' }
+  | { type: 'SET_ALL_USERS'; payload: User[] }
   | { type: 'ADD_BOOKING'; payload: Booking }
   | { type: 'UPDATE_BOOKING'; payload: Booking }
   | { type: 'DELETE_BOOKING'; payload: string }
@@ -501,9 +528,18 @@ type Action =
   | { type: 'UPDATE_PARTNER_PROJECT'; payload: PartnerProject }
   | { type: 'APPLY_TRAINING'; payload: TrainingApplication }
   | { type: 'UPDATE_TRAINING_APP'; payload: TrainingApplication }
+  | { type: 'DELETE_TRAINING_APP'; payload: string }
   | { type: 'SUBMIT_CONTACT'; payload: ContactMessage }
   | { type: 'UPDATE_USER_PROFILE'; payload: { userId: string; name: string; email: string; phone: string } }
-  | { type: 'UPDATE_USER_MEMBERSHIP'; payload: { userId: string; tier: MembershipTier; status: 'active' | 'pending' } }
+  | { type: 'UPDATE_USER_MEMBERSHIP'; payload: { userId: string; tier: MembershipTier | null; status: 'active' | 'pending' | 'none' } }
+  | { type: 'SET_TRAINING_PROGRAMS'; payload: TrainingProgram[] }
+  | { type: 'SET_TRAINING_APPLICATIONS'; payload: TrainingApplication[] }
+  | { type: 'SET_PARTNER_APPLICATIONS'; payload: PartnerApplication[] }
+  | { type: 'SET_BOOKINGS'; payload: Booking[] }
+  | { type: 'SET_NOTIFICATIONS'; payload: Notification[] }
+  | { type: 'SET_CONTACT_MESSAGES'; payload: ContactMessage[] }
+  | { type: 'SET_PARTNER_PROJECTS'; payload: PartnerProject[] }
+  | { type: 'RESET_CLOUD_DATA' }
   | { type: 'LOAD'; payload: AppState };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -514,6 +550,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, authReady: true };
     case 'SET_CURRENT_USER':
       return { ...state, currentUser: action.payload, authReady: true };
+    case 'SET_ALL_USERS':
+      return { ...state, users: action.payload };
     case 'LOGIN':
       return { ...state, currentUser: action.payload, authReady: true };
     case 'LOGOUT':
@@ -546,6 +584,32 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, trainingApplications: [...state.trainingApplications, action.payload] };
     case 'UPDATE_TRAINING_APP':
       return { ...state, trainingApplications: state.trainingApplications.map(t => t.id === action.payload.id ? action.payload : t) };
+    case 'DELETE_TRAINING_APP':
+      return { ...state, trainingApplications: state.trainingApplications.filter(t => t.id !== action.payload) };
+    case 'SET_TRAINING_PROGRAMS':
+      return { ...state, trainingPrograms: action.payload };
+    case 'SET_TRAINING_APPLICATIONS':
+      return { ...state, trainingApplications: action.payload };
+    case 'SET_PARTNER_APPLICATIONS':
+      return { ...state, partnerApplications: action.payload };
+    case 'SET_BOOKINGS':
+      return { ...state, bookings: action.payload };
+    case 'SET_NOTIFICATIONS':
+      return { ...state, notifications: action.payload };
+    case 'SET_CONTACT_MESSAGES':
+      return { ...state, contactMessages: action.payload };
+    case 'SET_PARTNER_PROJECTS':
+      return { ...state, partnerProjects: action.payload };
+    case 'RESET_CLOUD_DATA':
+      return {
+        ...state,
+        bookings: [],
+        notifications: [],
+        partnerApplications: [],
+        partnerProjects: [],
+        trainingApplications: [],
+        contactMessages: [],
+      };
     case 'SUBMIT_CONTACT':
       return { ...state, contactMessages: [...state.contactMessages, action.payload] };
     case 'UPDATE_USER_PROFILE':
@@ -613,11 +677,86 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // 3. Load database records once auth is resolved (RLS scopes rows to the
+  //    signed-in user; admins see everything). Falls back to local state
+  //    when the database is unreachable.
+  const dataKeyRef = useRef<string | null>(null);
+  const authReady = state.authReady;
+  const currentUserId = state.currentUser?.id ?? null;
+  const currentUserRole = state.currentUser?.role ?? null;
+  useEffect(() => {
+    if (!authReady) return;
+    const key = `${currentUserId ?? 'guest'}:${currentUserRole ?? 'none'}`;
+    if (dataKeyRef.current === key) return;
+    dataKeyRef.current = key;
+
+    if (!currentUserId) {
+      dispatch({ type: 'RESET_CLOUD_DATA' });
+    } else {
+      dispatch({ type: 'RESET_CLOUD_DATA' });
+      fetchBookingsFromDb().then(({ data }) => {
+        if (data) dispatch({ type: 'SET_BOOKINGS', payload: data });
+      });
+      fetchTrainingApplications().then(({ data }) => {
+        if (data) dispatch({ type: 'SET_TRAINING_APPLICATIONS', payload: data });
+      });
+      fetchPartnerApplications().then(({ data }) => {
+        if (data) dispatch({ type: 'SET_PARTNER_APPLICATIONS', payload: data });
+      });
+      fetchNotificationsFromDb(currentUserId).then(({ data }) => {
+        if (data) dispatch({ type: 'SET_NOTIFICATIONS', payload: data });
+      });
+      fetchContactMessages().then(({ data }) => {
+        if (data) dispatch({ type: 'SET_CONTACT_MESSAGES', payload: data });
+      });
+      fetchPartnerProjects().then(({ data }) => {
+        if (data) dispatch({ type: 'SET_PARTNER_PROJECTS', payload: data });
+      });
+    }
+    // Training programs are public — always refresh from the database
+    fetchTrainingPrograms().then(({ data }) => {
+      if (data && data.length > 0) dispatch({ type: 'SET_TRAINING_PROGRAMS', payload: data });
+    });
+  }, [authReady, currentUserId, currentUserRole]);
+
   return (
     <AppContext.Provider value={{ state, dispatch }}>
       {children}
     </AppContext.Provider>
   );
+}
+
+/**
+ * Save a notification to the database (best-effort) and mirror it in local
+ * state so the UI updates instantly. Falls back to a local-only entry when
+ * the database write fails.
+ */
+export async function saveNotification(
+  dispatch: React.Dispatch<Action>,
+  input: { userId: string; title: string; message: string; link: string }
+): Promise<void> {
+  const { data } = await insertNotification({
+    user_id: input.userId,
+    title: input.title,
+    message: input.message,
+    link: input.link,
+  });
+  if (data) {
+    dispatch({ type: 'ADD_NOTIFICATION', payload: data });
+  } else {
+    dispatch({
+      type: 'ADD_NOTIFICATION',
+      payload: {
+        id: genId('n'),
+        userId: input.userId,
+        title: input.title,
+        message: input.message,
+        read: false,
+        link: input.link,
+        createdAt: new Date().toISOString(),
+      },
+    });
+  }
 }
 
 export function useStore() {
@@ -644,10 +783,14 @@ export function genId(prefix = 'id') {
 }
 
 export function genBookingId() {
-  return `LC-${10306 + Math.floor(Math.random() * 900)}`;
+  // Timestamp-based suffix keeps ids unique per millisecond (the old
+  // 900-value random range caused primary-key collisions on insert).
+  return `LC-${Date.now().toString().slice(-5)}${Math.floor(Math.random() * 10)}`;
 }
 
 export const STATUS_LABELS: Record<BookingStatus, string> = {
+  awaiting_review: 'Awaiting Review',
+  rejected: 'Rejected',
   pending: 'Pending',
   confirmed: 'Confirmed',
   cleaner_assigned: 'Cleaner Assigned',
@@ -660,6 +803,8 @@ export const STATUS_LABELS: Record<BookingStatus, string> = {
 };
 
 export const STATUS_COLORS: Record<BookingStatus, string> = {
+  awaiting_review: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20',
+  rejected: 'text-red-500 bg-red-500/10 border-red-500/20',
   pending: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
   confirmed: 'text-blue-400 bg-blue-400/10 border-blue-400/20',
   cleaner_assigned: 'text-violet-400 bg-violet-400/10 border-violet-400/20',

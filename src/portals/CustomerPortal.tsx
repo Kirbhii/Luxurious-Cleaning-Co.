@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  CalendarCheck, Clock, CheckCircle2, XCircle, Bell, ArrowRight,
+  CalendarCheck, Clock, CheckCircle2, XCircle, Bell, ArrowRight, ArrowLeft,
   ChevronDown, ChevronUp, Camera, User as UserIcon, Crown, LogOut, Save, Trash2,
+  GraduationCap, Briefcase,
 } from 'lucide-react';
-import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS } from '../store';
+import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, saveNotification } from '../store';
+import { useToast } from '../components/ToastContainer';
 import type { Booking } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import { deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid } from '../lib/supabase';
+import { TIER_PERKS, TIER_SUPPORT, TIER_CREDITS, TIER_DISCOUNT, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/membership';
 
 const STATUS_ORDER = [
   { key: 'pending', label: 'Pending' },
@@ -19,7 +23,7 @@ const STATUS_ORDER = [
 
 function ProgressTimeline({ booking }: { booking: Booking }) {
   const activeIdx = STATUS_ORDER.findIndex(s => s.key === booking.status);
-  if (['cancelled', 'rescheduled', 'awaiting_quote'].includes(booking.status)) return null;
+  if (['cancelled', 'rescheduled', 'awaiting_quote', 'awaiting_review', 'rejected'].includes(booking.status)) return null;
 
   return (
     <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -62,6 +66,16 @@ function BookingCard({ booking, cleanerName, onDelete }: { booking: Booking; cle
             <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${STATUS_COLORS[booking.status]}`}>
               {STATUS_LABELS[booking.status]}
             </span>
+            {(booking.priority ?? 'normal') !== 'normal' && (
+              <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${PRIORITY_COLORS[booking.priority ?? 'normal']}`}>
+                {PRIORITY_LABELS[booking.priority ?? 'normal']}
+              </span>
+            )}
+            {(booking.discountPercent ?? 0) > 0 && (
+              <span className="text-xs font-medium px-2.5 py-1 rounded-full border text-gold-400 bg-gold-400/10 border-gold-400/25">
+                {booking.discountPercent}% member rate
+              </span>
+            )}
             {onDelete && <button onClick={onDelete} className="p-1.5 text-red-400 hover:text-red-300 rounded-md hover:bg-red-400/10" title="Delete booking"><Trash2 size={14} /></button>}
           </div>
         </div>
@@ -141,7 +155,8 @@ export default function CustomerPortal() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'bookings' | 'notifications' | 'membership' | 'profile'>('bookings');
+  const toast = useToast();
+  const [activeTab, setActiveTab] = useState<'bookings' | 'applications' | 'notifications' | 'membership' | 'profile'>('bookings');
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [profileForm, setProfileForm] = useState({ name: user.name, email: user.email, phone: user.phone });
   const [profileMessage, setProfileMessage] = useState('');
@@ -153,13 +168,23 @@ export default function CustomerPortal() {
   } | null>(null);
 
   const myBookings = state.bookings.filter(b => b.customerId === user.id);
+  const myTrainingApps = state.trainingApplications.filter(a => a.userId === user.id);
+  const myPartnerApp = state.partnerApplications.find(p => p.userId === user.id) || null;
+  const applicationsCount = myTrainingApps.length + (myPartnerApp ? 1 : 0);
   const myNotifications = state.notifications.filter(n => n.userId === user.id);
   const unreadCount = myNotifications.filter(n => !n.read).length;
 
-  const filteredBookings = myBookings.filter(b => bookingFilter === 'all' || b.status === bookingFilter);
-  const upcoming = filteredBookings.filter(b => ['pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'awaiting_quote'].includes(b.status));
+  const ACTIVE_STATUSES = ['pending', 'awaiting_review', 'awaiting_quote', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress'];
+  const filteredBookings = myBookings.filter(b => {
+    if (bookingFilter === 'all') return true;
+    if (bookingFilter === 'pending') return ACTIVE_STATUSES.includes(b.status);
+    return b.status === bookingFilter;
+  });
+  const upcoming = filteredBookings.filter(b => ACTIVE_STATUSES.includes(b.status));
   const completed = filteredBookings.filter(b => b.status === 'completed');
   const cancelled = filteredBookings.filter(b => b.status === 'cancelled');
+  // Any status not covered above (e.g. rejected, rescheduled) must still render — never hide a booking.
+  const other = filteredBookings.filter(b => ![...ACTIVE_STATUSES, 'completed', 'cancelled'].includes(b.status));
 
   function getCleanerName(cleanerId: string | null) {
     if (!cleanerId) return null;
@@ -171,8 +196,46 @@ export default function CustomerPortal() {
     navigate('/login');
   }
 
+  function requestCancelMembership() {
+    setConfirmation({
+      title: 'Cancel subscription?',
+      message: `Your ${user.membershipTier} membership and all member benefits (member rate, priority queue${user.membershipTier === 'gold' ? ', urgent requests, Gold-only services' : ''}) will end immediately.`,
+      confirmLabel: 'Cancel Subscription',
+      onConfirm: () => { cancelMembership(); setConfirmation(null); },
+    });
+  }
+
+  async function cancelMembership() {
+    dispatch({ type: 'UPDATE_USER_MEMBERSHIP', payload: { userId: user.id, tier: null, status: 'none' } });
+    if (isUuid(user.id)) {
+      // membership_tier/status are server-authoritative (see migration 007).
+      const { error } = await cancelMembershipDb();
+      if (error) console.error('[Customer] Membership cancel DB sync failed:', error.message);
+    }
+    await saveNotification(dispatch, {
+      userId: user.id,
+      title: 'Membership Cancelled',
+      message: 'Your membership subscription has been cancelled. Member benefits no longer apply to new bookings.',
+      link: '/membership',
+    });
+    toast.success('Subscription Cancelled', 'Your membership has been cancelled.');
+  }
+
+  function requestLogout() {
+    setConfirmation({
+      title: 'Log out?',
+      message: 'You will be signed out of your account and redirected to the login page.',
+      confirmLabel: 'Log Out',
+      onConfirm: () => { handleLogout(); setConfirmation(null); },
+    });
+  }
+
   function deleteBooking(bookingId: string) {
+    deleteBookingRow(bookingId).then(({ error }) => {
+      if (error) console.error('[Customer] Booking delete DB sync failed:', error.message);
+    });
     dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
+    toast.success('Booking Deleted', 'The booking has been removed from your account.');
   }
 
   function requestDeleteBooking(bookingId: string) {
@@ -189,11 +252,15 @@ export default function CustomerPortal() {
     setProfileMessage('');
     const duplicateEmail = state.users.some(account => account.id !== user.id && account.email.toLowerCase() === profileForm.email.trim().toLowerCase());
     if (!profileForm.name.trim() || !profileForm.email.trim()) {
-      setProfileMessage('Name and email are required.');
+      const errorMsg = 'Name and email are required.';
+      setProfileMessage(errorMsg);
+      toast.error('Validation Error', errorMsg);
       return;
     }
     if (duplicateEmail) {
-      setProfileMessage('That email is already in use.');
+      const errorMsg = 'That email is already in use.';
+      setProfileMessage(errorMsg);
+      toast.error('Email Already Exists', errorMsg);
       return;
     }
     setConfirmation({
@@ -210,7 +277,9 @@ export default function CustomerPortal() {
             phone: profileForm.phone.trim(),
           },
         });
-        setProfileMessage('Profile updated successfully.');
+        const successMsg = 'Profile updated successfully.';
+        setProfileMessage(successMsg);
+        toast.success('Profile Updated!', 'Your information has been saved.');
         setConfirmation(null);
       },
     });
@@ -227,11 +296,15 @@ export default function CustomerPortal() {
             <h1 className="font-serif text-3xl text-cream-100">Welcome, {user.name.split(' ')[0]}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+              <ArrowLeft size={14} />
+              Back to Home
+            </Link>
             <Link to="/book" className="flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
               + New Booking <ArrowRight size={13} />
             </Link>
             <button
-              onClick={handleLogout}
+              onClick={requestLogout}
               className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
             >
               <LogOut size={14} />
@@ -265,6 +338,7 @@ export default function CustomerPortal() {
           <div className="flex gap-1 border-b border-gold-400/10">
             {[
               { key: 'bookings', label: 'Bookings', count: myBookings.length },
+              { key: 'applications', label: 'My Applications', count: applicationsCount },
               { key: 'notifications', label: 'Notifications', count: unreadCount },
               { key: 'membership', label: 'Membership' },
                 { key: 'profile', label: 'Profile' },
@@ -302,7 +376,7 @@ export default function CustomerPortal() {
               <div className="mb-8">
                 <div className="text-xs text-gold-400 uppercase tracking-wider font-medium mb-4">Upcoming & Active</div>
                 <div className="space-y-4">
-                  {upcoming.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} onDelete={['pending', 'cancelled'].includes(b.status) ? () => requestDeleteBooking(b.id) : undefined} />)}
+                  {upcoming.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} onDelete={['pending', 'awaiting_review', 'cancelled'].includes(b.status) ? () => requestDeleteBooking(b.id) : undefined} />)}
                 </div>
               </div>
             )}
@@ -322,6 +396,14 @@ export default function CustomerPortal() {
                 </div>
               </div>
             )}
+            {other.length > 0 && (
+              <div className="mt-8">
+                <div className="text-xs text-cream-300/60 uppercase tracking-wider font-medium mb-4">Other Updates</div>
+                <div className="space-y-4">
+                  {other.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} />)}
+                </div>
+              </div>
+            )}
             {filteredBookings.length === 0 && (
               <div className="text-center py-16">
                 <CalendarCheck size={32} className="text-cream-300/30 mx-auto mb-3" />
@@ -331,6 +413,91 @@ export default function CustomerPortal() {
                 </Link>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'applications' && (
+          <div className="max-w-3xl space-y-8">
+            {/* Training applications */}
+            <div>
+              <div className="text-xs text-gold-400 uppercase tracking-wider font-medium mb-4 flex items-center gap-2">
+                <GraduationCap size={13} /> Training Applications
+              </div>
+              {myTrainingApps.length === 0 ? (
+                <div className="bg-navy-800 border border-gold-400/10 rounded-xl p-6 text-center">
+                  <div className="text-cream-300 text-sm mb-4">You have not applied for any training program yet.</div>
+                  <Link to="/training" className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
+                    View Training Programs <ArrowRight size={14} />
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {myTrainingApps.map(app => {
+                    const program = state.trainingPrograms.find(p => p.id === app.programId);
+                    return (
+                      <div key={app.id} className="bg-navy-800 border border-gold-400/10 rounded-xl p-5">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div>
+                            <h3 className="font-serif text-lg text-cream-100">{program?.name || 'Training Program'}</h3>
+                            <div className="text-xs text-cream-300 mt-1">
+                              {program ? `${program.duration} · ${program.schedule}` : `Applied ${new Date(app.createdAt).toLocaleDateString()}`}
+                            </div>
+                          </div>
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize shrink-0 ${
+                            app.status === 'accepted' || app.status === 'completed' ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
+                            : app.status === 'rejected' ? 'text-red-400 bg-red-400/10 border-red-400/20'
+                            : app.status === 'under_review' ? 'text-amber-400 bg-amber-400/10 border-amber-400/20'
+                            : app.status === 'scheduled' ? 'text-violet-400 bg-violet-400/10 border-violet-400/20'
+                            : 'text-blue-400 bg-blue-400/10 border-blue-400/20'
+                          }`}>
+                            {app.status.replace('_', ' ')}
+                          </span>
+                        </div>
+                        {program && (
+                          <p className="text-sm text-cream-300 leading-relaxed mb-2">{program.description}</p>
+                        )}
+                        <div className="text-xs text-cream-300/60">Applied: {new Date(app.createdAt).toLocaleDateString()}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Partnership application */}
+            <div>
+              <div className="text-xs text-gold-400 uppercase tracking-wider font-medium mb-4 flex items-center gap-2">
+                <Briefcase size={13} /> Partnership Application
+              </div>
+              {!myPartnerApp ? (
+                <div className="bg-navy-800 border border-gold-400/10 rounded-xl p-6 text-center">
+                  <div className="text-cream-300 text-sm mb-4">You have not submitted a partnership application yet.</div>
+                  <Link to="/partnerships" className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
+                    Apply for Partnership <ArrowRight size={14} />
+                  </Link>
+                </div>
+              ) : (
+                <div className="bg-navy-800 border border-gold-400/10 rounded-xl p-5">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h3 className="font-serif text-lg text-cream-100">{myPartnerApp.companyName}</h3>
+                      <div className="text-xs text-cream-300 mt-1">{myPartnerApp.industry} · {myPartnerApp.contactPerson}</div>
+                    </div>
+                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize shrink-0 ${
+                      myPartnerApp.status === 'approved' ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
+                      : myPartnerApp.status === 'rejected' ? 'text-red-400 bg-red-400/10 border-red-400/20'
+                      : myPartnerApp.status === 'under_review' ? 'text-amber-400 bg-amber-400/10 border-amber-400/20'
+                      : 'text-blue-400 bg-blue-400/10 border-blue-400/20'
+                    }`}>
+                      {myPartnerApp.status.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <p className="text-sm text-cream-300 leading-relaxed mb-2">{myPartnerApp.proposal}</p>
+                  <div className="text-xs text-cream-300 mb-1">Services: {myPartnerApp.servicesRequired} · Volume: {myPartnerApp.estimatedVolume}</div>
+                  <div className="text-xs text-cream-300/60">Applied: {new Date(myPartnerApp.createdAt).toLocaleDateString()}</div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -370,15 +537,47 @@ export default function CustomerPortal() {
                   </div>
                   <div>
                     <div className="font-serif text-2xl text-cream-100 capitalize">{user.membershipTier} Member</div>
-                    <div className="text-xs text-emerald-400 font-medium mt-0.5">Active</div>
+                    <div className="text-xs text-emerald-400 font-medium mt-0.5">Active · {TIER_DISCOUNT[user.membershipTier]}% member rate on every booking</div>
                   </div>
                 </div>
-                <div className="text-sm text-cream-300 mb-6">
-                  Your {user.membershipTier} membership is active. Enjoy priority booking and exclusive member benefits.
+                {/* Your benefits — every item below is live in the system */}
+                <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-3">Your benefits</div>
+                <ul className="space-y-2.5 mb-6">
+                  {TIER_PERKS[user.membershipTier].map(perk => (
+                    <li key={perk} className="flex items-start gap-2.5 text-sm text-cream-200">
+                      <CheckCircle2 size={14} className="text-gold-400 shrink-0 mt-0.5" />
+                      {perk}
+                    </li>
+                  ))}
+                </ul>
+                <div className="grid sm:grid-cols-2 gap-3 mb-6">
+                  <div className="bg-navy-700 border border-gold-400/15 rounded-xl p-4">
+                    <div className="text-xs text-cream-300/70 uppercase tracking-wider mb-1">{TIER_SUPPORT[user.membershipTier].label}</div>
+                    <div className="text-sm font-semibold text-cream-100">{TIER_SUPPORT[user.membershipTier].contact}</div>
+                  </div>
+                  <div className="bg-navy-700 border border-gold-400/15 rounded-xl p-4">
+                    <div className="text-xs text-cream-300/70 uppercase tracking-wider mb-1">Benefit credits</div>
+                    {TIER_CREDITS[user.membershipTier].map(c => (
+                      <div key={c} className="text-sm text-cream-100">· {c}</div>
+                    ))}
+                    <div className="text-xs text-cream-300/70 mt-1">Redeem via support or your portal bookings.</div>
+                  </div>
                 </div>
-                <Link to="/membership" className="text-sm text-gold-400 hover:text-gold-300 flex items-center gap-1 transition-colors">
-                  View membership details <ArrowRight size={13} />
-                </Link>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Link to="/book" className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
+                    Book with Member Rate <ArrowRight size={14} />
+                  </Link>
+                  <Link to="/membership" className="text-sm text-gold-400 hover:text-gold-300 flex items-center gap-1 transition-colors">
+                    View membership details <ArrowRight size={13} />
+                  </Link>
+                  <button
+                    onClick={requestCancelMembership}
+                    className="text-sm text-red-400 hover:text-red-300 border border-red-400/25 hover:border-red-400/50 px-4 py-2 rounded-lg transition-colors"
+                  >
+                    Cancel subscription
+                  </button>
+                </div>
+                <p className="text-[11px] text-cream-300/60 mt-3">Your membership stays active until you cancel it here.</p>
               </div>
             ) : (
               <div className="bg-navy-800 border border-gold-400/10 rounded-2xl p-8 text-center">

@@ -39,3 +39,49 @@ This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin con
 - Use double quotes for strings containing apostrophes (`"We're here to help"`), or escape them in single-quoted strings. An unescaped apostrophe in a single-quoted string breaks the build.
 - Ensure JSX tags are closed and braces are balanced.
 - Export components as default exports.
+
+## Security conventions
+
+These rules were established by the security-hardening pass in
+`supabase/migrations/007_security_hardening.sql`. Follow them for new code.
+
+**Never write privileged profile columns from the client.**
+`profiles.role`, `membership_tier`, `membership_status`, `permissions`,
+`employee_id`, `company_id`, `company_code`, and `pin_hash` are frozen against
+client `UPDATE` by the `profiles_enforce_column_privileges` trigger. Self-service
+`updateProfile()` accepts only `name`, `phone`, `avatar_url`.
+
+- Membership changes → `activateMembership(tier)` / `cancelMembership()` (RPC)
+- PIN set/verify → `setPin(pin)` / `verifyUserPin(pin)` / `hasPin()` (RPC)
+- Anything else privileged → a `SECURITY DEFINER` function, or an edge function
+  running as `service_role`
+
+**Never hashed client-side.** Password/PIN hashing happens in Postgres via
+`pgcrypto`. A 4-6 digit PIN hashed with bare SHA-256 in the browser is
+brute-forceable in under a second.
+
+**Storage buckets holding user files are private.** Render them with signed
+URLs (`getResumeSignedUrl` + the `ResumeLink` component), never
+`getPublicUrl()`. A bucket path must begin with the owner's user id —
+`<userId>/<file>` — because the storage RLS policies key off
+`(storage.foldername(name))[1]`.
+
+**Edge functions must authenticate the caller.** `create-account` verifies the
+bearer token and requires `role = 'admin'` before touching the service-role
+client. Never run a privileged operation without checking the caller's role
+server-side; a client-side route guard is not a security boundary.
+
+**Return generic errors.** Do not echo internal error messages or generated
+credentials to unauthenticated callers.
+
+**RLS is row-level, not column-level.** A permissive `FOR UPDATE USING
+(id = auth.uid())` policy grants every column on that row. Pair broad policies
+with a column-privilege trigger.
+
+## Site metadata
+
+Page title, description, and the `robots` index/noindex flag are driven by
+`.figma/make/site.json` — not by editing `index.html` directly. The Vite
+`figmaSiteConfiguration` plugin injects them into the `<!-- figma:* -->` slots.
+Editing `index.html` metadata by hand produces duplicated tags.
+

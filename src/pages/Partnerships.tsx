@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { CheckCircle2, ArrowRight, Building2, Users, TrendingUp } from 'lucide-react';
-import { useStore, useCurrentUser, genId } from '../store';
+import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { PartnerApplication } from '../store';
+import { useToast } from '../components/ToastContainer';
+import AuthPromptModal from '../components/AuthPromptModal';
+import ResumeUpload from '../components/ResumeUpload';
+import { uploadResume, insertPartnerApplication, isUuid } from '../lib/supabase';
 
 const PARTNER_TYPES = [
   'Construction Companies', 'Real Estate Companies', 'Property Developers',
@@ -17,8 +21,11 @@ const INDUSTRIES = [
 export default function Partnerships() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser();
+  const toast = useToast();
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
 
   const existingApp = user ? state.partnerApplications.find(p => p.userId === user.id) : null;
 
@@ -41,30 +48,68 @@ export default function Partnerships() {
     setForm(f => ({ ...f, [key]: val }));
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!user) {
+      setAuthPromptOpen(true);
+      return;
+    }
     setLoading(true);
-    setTimeout(() => {
-      const app: PartnerApplication = {
+
+    // Upload company profile / resume first (optional) — application still submits if upload fails
+    let resumeName: string | null = null;
+    let resumeUrl: string | null = null;
+    if (resumeFile) {
+      resumeName = resumeFile.name;
+      try {
+        const uploaded = await uploadResume(resumeFile, user.id);
+        // Private bucket: store the storage path, not a public URL.
+        // ResumeLink mints a short-lived signed URL when an admin opens it.
+        resumeUrl = uploaded.path;
+      } catch (err) {
+        console.error('[Partnerships] Resume upload failed:', err);
+        toast.error('File Upload Failed', 'Your application will be submitted without the attached file. You can contact us to send it separately.');
+      }
+    }
+
+    setTimeout(async () => {
+      // Persist to the database (best-effort) — falls back to local-only.
+      // `additionalInfo` has no database column; it is sent only to the database subset.
+      let app: PartnerApplication = {
         id: genId('pa'),
         userId: user?.id || null,
         ...form,
+        resumeName,
+        resumeUrl,
         status: 'submitted',
         createdAt: new Date().toISOString(),
       };
+      if (isUuid(user?.id)) {
+        const { data } = await insertPartnerApplication({
+          user_id: user!.id,
+          company_name: form.companyName,
+          industry: form.industry,
+          contact_person: form.contactPerson,
+          position: form.position,
+          email: form.email,
+          phone: form.phone,
+          website: form.website,
+          address: form.address,
+          services_required: form.servicesRequired,
+          estimated_volume: form.estimatedVolume,
+          proposal: form.proposal,
+          resume_name: resumeName,
+          resume_url: resumeUrl,
+        });
+        if (data) app = data;
+      }
       dispatch({ type: 'SUBMIT_PARTNER_APP', payload: app });
       if (user) {
-        dispatch({
-          type: 'ADD_NOTIFICATION',
-          payload: {
-            id: genId('n'),
-            userId: user.id,
-            title: 'Partnership Application Received',
-            message: `Your partnership application for ${form.companyName} has been submitted. We will review it within 3-5 business days.`,
-            read: false,
-            link: '/portal/partner',
-            createdAt: new Date().toISOString(),
-          },
+        await saveNotification(dispatch, {
+          userId: user.id,
+          title: 'Partnership Application Received',
+          message: `Your partnership application for ${form.companyName} has been submitted. We will review it within 3-5 business days.`,
+          link: '/portal/partner',
         });
       }
       setLoading(false);
@@ -74,6 +119,7 @@ export default function Partnerships() {
 
   return (
     <div className="pt-16 min-h-screen bg-navy-950">
+      <AuthPromptModal open={authPromptOpen} onClose={() => setAuthPromptOpen(false)} redirectAfterLogin="/partnerships" />
       {/* Header */}
       <section className="py-20 bg-navy-900 border-b border-gold-400/10">
         <div className="max-w-7xl mx-auto px-6">
@@ -204,6 +250,12 @@ export default function Partnerships() {
                   <label className="block text-xs text-cream-300 mb-1.5">Additional Information</label>
                   <textarea rows={3} value={form.additionalInfo} onChange={e => set('additionalInfo', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/40 resize-none" />
                 </div>
+                <ResumeUpload
+                  file={resumeFile}
+                  onChange={setResumeFile}
+                  label="Company Profile / Supporting Document (optional)"
+                  hint="PDF or Word (.pdf, .doc, .docx), max 5MB — e.g. company profile, portfolio, or permits"
+                />
                 <button
                   type="submit"
                   disabled={loading}

@@ -1,5 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import type { UserRole } from '../store';
+import type {
+  Booking as AppBooking,
+  ContactMessage as AppContactMessage,
+  Notification as AppNotification,
+  PartnerApplication as AppPartnerApplication,
+  PartnerProject as AppPartnerProject,
+  TrainingApplication as AppTrainingApplication,
+  TrainingProgram as AppTrainingProgram,
+} from '../store';
 
 // ─── Environment ────────────────────────────────────────────────────────────
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -14,7 +23,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
 export type BookingStatus =
   | 'pending' | 'confirmed' | 'cleaner_assigned'
   | 'en_route' | 'in_progress' | 'completed'
-  | 'cancelled' | 'rescheduled' | 'awaiting_quote';
+  | 'cancelled' | 'rescheduled' | 'awaiting_quote'
+  | 'awaiting_review' | 'rejected';
 
 export type MembershipTier = 'bronze' | 'silver' | 'gold';
 export type MembershipStatus = 'none' | 'active' | 'pending';
@@ -36,6 +46,8 @@ export interface ProfileRow {
   company_id: string | null;
   company_code: string | null;
   permissions: string[];
+  pin_hash: string | null;
+  pin_created_at: string | null;
   membership_tier: MembershipTier | null;
   membership_status: MembershipStatus;
   partner_application_id: string | null;
@@ -71,6 +83,10 @@ export interface BookingRow {
   partner_company_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Membership benefit wiring (migration 006). Optional until applied. */
+  priority?: string | null;
+  member_tier?: MembershipTier | null;
+  discount_percent?: number | null;
 }
 
 /** Mirrors public.booking_timeline table */
@@ -109,6 +125,9 @@ export interface PartnerApplicationRow {
   services_required: string;
   estimated_volume: string;
   proposal: string;
+  resume_name?: string | null;
+  resume_url?: string | null;
+  company_id?: string | null;
   status: ApplicationStatus;
   created_at: string;
   updated_at: string;
@@ -156,6 +175,8 @@ export interface TrainingApplicationRow {
   email: string;
   phone: string;
   experience: string;
+  resume_name?: string | null;
+  resume_url?: string | null;
   status: TrainingAppStatus;
   created_at: string;
   updated_at: string;
@@ -289,11 +310,52 @@ export async function signOut() {
   return { error };
 }
 
+/** Send a password reset email to the user. */
+export async function resetPassword(email: string) {
+  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`,
+  });
+  return { data, error };
+}
+
+/** Update the user's password (called after clicking the reset link). */
+export async function updatePassword(newPassword: string) {
+  const { data, error } = await supabase.auth.updateUser({
+    password: newPassword,
+  });
+  return { data, error };
+}
+
+// ─── Client-safe column lists ────────────────────────────────────────────────
+// profiles.pin_hash is NOT readable by clients (migration 007 revokes the
+// table-level SELECT and re-grants only safe columns). A wildcard `select('*')`
+// therefore FAILS with a permission error — always select these columns
+// explicitly. Add new columns here when the schema grows.
+export const PROFILE_COLUMNS = [
+  'id',
+  'email',
+  'name',
+  'phone',
+  'role',
+  'employee_id',
+  'assigned_zone_id',
+  'company_id',
+  'company_code',
+  'permissions',
+  'pin_created_at',
+  'membership_tier',
+  'membership_status',
+  'partner_application_id',
+  'avatar_url',
+  'created_at',
+  'updated_at',
+].join(', ');
+
 /** Fetch the profiles row for the currently authenticated user. */
 export async function fetchProfile(userId: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(PROFILE_COLUMNS)
     .eq('id', userId)
     .single();
 
@@ -301,13 +363,35 @@ export async function fetchProfile(userId: string): Promise<ProfileRow | null> {
     console.error('[Supabase] fetchProfile error:', error.message);
     return null;
   }
-  return data;
+  return data as unknown as ProfileRow;
 }
 
-/** Update mutable profile fields for the current user. */
+/** Fetch all profiles from the database (admin only). */
+export async function fetchAllProfiles(): Promise<ProfileRow[]> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select(PROFILE_COLUMNS)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[Supabase] fetchAllProfiles error:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/** Update mutable, self-service profile fields for the current user.
+ *
+ *  Only identity/contact fields are accepted. Privileged columns
+ *  (role, membership_tier, membership_status, employee_id, company_id,
+ *  permissions, pin_hash) are enforced server-side by the
+ *  enforce_profile_column_privileges trigger in migration 007, and are
+ *  deliberately not part of this signature. Membership changes go through
+ *  activateMembership() / cancelMembership().
+ */
 export async function updateProfile(
   userId: string,
-  fields: Partial<Pick<ProfileRow, 'name' | 'phone' | 'avatar_url' | 'membership_tier' | 'membership_status'>>
+  fields: Partial<Pick<ProfileRow, 'name' | 'phone' | 'avatar_url'>>
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabase.from('profiles') as any)
@@ -383,20 +467,797 @@ export async function markAllNotificationsRead(userId: string) {
   return { error };
 }
 
-/** Fetch all profiles — admin only (RLS enforced on the server). */
-export async function fetchAllProfiles() {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .order('created_at', { ascending: false });
-  return { data, error };
-}
-
 /** Fetch cleaner profiles only. */
 export async function fetchCleaners() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(PROFILE_COLUMNS)
     .eq('role', 'cleaner');
-  return { data, error };
+  return { data: data as unknown as ProfileRow[] | null, error };
+}
+
+// ─── Admin: Account Creation ─────────────────────────────────────────────────
+
+/**
+ * Approve a cleaner or partner application and automatically create their account.
+ * This calls the Supabase Edge Function which:
+ * 1. Generates a random password
+ * 2. Creates the auth.users account
+ * 3. Sends a welcome email with credentials
+ * 
+ * @param applicationType - 'cleaner' or 'partner'
+ * @param applicationId - UUID of the training_application or partner_application
+ * @returns credentials object with email, password, employeeId/companyCode
+ */
+export async function approveApplicationAndCreateAccount(
+  applicationType: 'cleaner' | 'partner',
+  applicationId: string
+) {
+  // The edge function uses the service-role key and verifies that the caller is
+  // an admin. Send the current access token explicitly so the Authorization
+  // header is always present — even if the client has not refreshed the session.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+
+  if (!accessToken) {
+    return {
+      data: null,
+      error: { message: 'You must be signed in as an admin to approve applications.' },
+    };
+  }
+
+  const { data, error } = await supabase.functions.invoke('create-account', {
+    body: { applicationType, applicationId },
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (error) {
+    console.error('[approveApplicationAndCreateAccount] error:', error);
+    return { data: null, error };
+  }
+
+  return { data, error: null };
+}
+
+/**
+ * Update application status to 'approved' or 'accepted'.
+ * Call this BEFORE or AFTER creating the account.
+ */
+export async function updateApplicationStatus(
+  applicationType: 'cleaner' | 'partner',
+  applicationId: string,
+  status: 'approved' | 'accepted' | 'rejected'
+) {
+  const table = applicationType === 'cleaner' ? 'training_applications' : 'partner_applications';
+  
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.from(table) as any)
+    .update({ status })
+    .eq('id', applicationId);
+
+  return { error };
+}
+
+// ─── PIN Helpers (Staff: Cleaner, Admin, Partner) ────────────────────────────
+// PINs are hashed and verified on the server (bcrypt via pgcrypto) by the
+// SECURITY DEFINER functions in migration 007. The client never sees the hash
+// and never computes one — a 4-6 digit PIN hashed client-side with bare SHA-256
+// is trivially brute-forced, and `pin_hash` is no longer readable by clients.
+
+/**
+ * Check if the current user has a PIN set.
+ * Server-side; does not read the hash into the client.
+ */
+export async function hasPin(): Promise<boolean> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.rpc as any)('has_user_pin');
+  if (error) {
+    console.error('[Supabase] hasPin error:', error.message);
+    return false;
+  }
+  return Boolean(data);
+}
+
+/**
+ * Create or update the current user's PIN.
+ * @param pin - 4-6 digit PIN
+ */
+export async function setPin(pin: string): Promise<{ error: { message: string } | null }> {
+  // Validate locally first for a fast, friendly error.
+  if (!/^\d{4,6}$/.test(pin)) {
+    return { error: { message: 'PIN must be 4-6 digits' } };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.rpc as any)('set_user_pin', { p_pin: pin });
+
+  if (error) {
+    console.error('[Supabase] setPin error:', error.message);
+    return { error: { message: error.message } };
+  }
+  return { error: null };
+}
+
+/**
+ * Verify the current user's PIN.
+ * The comparison happens in the database; the client only receives a boolean.
+ */
+export async function verifyUserPin(
+  pin: string
+): Promise<{ valid: boolean; error?: { message: string } }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.rpc as any)('verify_user_pin', { p_pin: pin });
+
+  if (error) {
+    console.error('[Supabase] verifyUserPin error:', error.message);
+    return { valid: false, error: { message: error.message } };
+  }
+
+  if (data !== true) {
+    return { valid: false, error: { message: 'Incorrect PIN' } };
+  }
+
+  return { valid: true };
+}
+
+// ─── Membership Helpers ──────────────────────────────────────────────────────
+// membership_tier / membership_status are frozen against direct client writes
+// (migration 007 trigger), so activation goes through a server-side function.
+
+/** Activate the current customer's membership at the given tier. */
+export async function activateMembership(
+  tier: MembershipTier
+): Promise<{ error: { message: string } | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.rpc as any)('activate_own_membership', { p_tier: tier });
+  if (error) {
+    console.error('[Supabase] activateMembership error:', error.message);
+    return { error: { message: error.message } };
+  }
+  return { error: null };
+}
+
+/** Cancel the current customer's membership. */
+export async function cancelMembership(): Promise<{ error: { message: string } | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.rpc as any)('cancel_own_membership');
+  if (error) {
+    console.error('[Supabase] cancelMembership error:', error.message);
+    return { error: { message: error.message } };
+  }
+  return { error: null };
+}
+
+// ─── Database Persistence ─────────────────────────────────────────────────────
+// Row-level security already scopes SELECTs (own rows, or all rows for admin),
+// so plain selects return exactly what the signed-in user may see.
+// Every helper fails soft ({ data: null, error }) so the app keeps working
+// with local state when the database is unreachable.
+
+export function isUuid(value: string | null | undefined): value is string {
+  return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+// ── Training programs ──
+
+export function trainingProgramFromRow(row: TrainingProgramRow): AppTrainingProgram {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    requirements: row.requirements,
+    duration: row.duration,
+    objectives: row.objectives ?? [],
+    schedule: row.schedule,
+    slots: row.slots,
+    slotsAvailable: row.slots_available,
+    price: row.price === null || row.price === undefined ? null : Number(row.price),
+  };
+}
+
+export async function fetchTrainingPrograms(): Promise<{ data: AppTrainingProgram[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('training_programs')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true });
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as TrainingProgramRow[]).map(trainingProgramFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+// ── Training applications ──
+
+export function trainingAppFromRow(row: TrainingApplicationRow): AppTrainingApplication {
+  return {
+    id: row.id,
+    programId: row.program_id,
+    userId: row.user_id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    experience: row.experience,
+    resumeName: row.resume_name ?? null,
+    resumeUrl: row.resume_url ?? null,
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertTrainingApplication(input: {
+  program_id: string;
+  user_id: string | null;
+  name: string;
+  email: string;
+  phone: string;
+  experience: string;
+  resume_name: string | null;
+  resume_url: string | null;
+}): Promise<{ data: AppTrainingApplication | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await (supabase.from('training_applications') as any)
+      .insert(input)
+      .select()
+      .single();
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: trainingAppFromRow(data as TrainingApplicationRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function fetchTrainingApplications(): Promise<{ data: AppTrainingApplication[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('training_applications')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as TrainingApplicationRow[]).map(trainingAppFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function updateTrainingApplicationRow(id: string, fields: { status: TrainingAppStatus }): Promise<{ error: { message: string } | null }> {
+  try {
+    const { error } = await (supabase.from('training_applications') as any)
+      .update(fields)
+      .eq('id', id);
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function deleteTrainingApplicationRow(id: string): Promise<{ error: { message: string } | null }> {
+  try {
+    const { error } = await supabase.from('training_applications').delete().eq('id', id);
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+// ── Partner applications ──
+
+export function partnerAppFromRow(row: PartnerApplicationRow): AppPartnerApplication {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    companyName: row.company_name,
+    industry: row.industry,
+    contactPerson: row.contact_person,
+    position: row.position,
+    email: row.email,
+    phone: row.phone,
+    website: row.website,
+    address: row.address,
+    servicesRequired: row.services_required,
+    estimatedVolume: row.estimated_volume,
+  proposal: row.proposal,
+  resumeName: row.resume_name ?? null,
+  resumeUrl: row.resume_url ?? null,
+  companyId: row.company_id ?? null,
+  status: row.status,
+  createdAt: row.created_at,
+  };
+}
+
+export async function insertPartnerApplication(input: {
+  user_id: string | null;
+  company_name: string;
+  industry: string;
+  contact_person: string;
+  position: string;
+  email: string;
+  phone: string;
+  website: string;
+  address: string;
+  services_required: string;
+  estimated_volume: string;
+  proposal: string;
+  resume_name: string | null;
+  resume_url: string | null;
+}): Promise<{ data: AppPartnerApplication | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await (supabase.from('partner_applications') as any)
+      .insert(input)
+      .select()
+      .single();
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: partnerAppFromRow(data as PartnerApplicationRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function fetchPartnerApplications(): Promise<{ data: AppPartnerApplication[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('partner_applications')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as PartnerApplicationRow[]).map(partnerAppFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function updatePartnerApplicationRow(id: string, fields: { status: ApplicationStatus }): Promise<{ error: { message: string } | null }> {
+  try {
+    const { error } = await (supabase.from('partner_applications') as any)
+      .update(fields)
+      .eq('id', id);
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+// ── Bookings ──
+
+export function bookingFromRow(row: BookingRow & { booking_timeline?: TimelineRow[] }): AppBooking {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    service: row.service,
+    status: row.status as AppBooking['status'],
+    date: row.date,
+    time: (row.time || '').slice(0, 5),
+    address: row.address,
+    city: row.city,
+    propertyType: row.property_type,
+    bedrooms: row.bedrooms,
+    bathrooms: row.bathrooms,
+    size: row.size,
+    frequency: row.frequency,
+    specialRequests: row.special_requests,
+    fragrance: row.fragrance,
+    allergies: row.allergies,
+    accessInstructions: row.access_instructions,
+    cleanerId: row.cleaner_id,
+    cleanerNotes: row.cleaner_notes,
+    beforePhotos: row.before_photos ?? [],
+    progressPhotos: row.progress_photos ?? [],
+    afterPhotos: row.after_photos ?? [],
+    priority: (row.priority as AppBooking['priority']) ?? 'normal',
+    memberTier: row.member_tier ?? null,
+    discountPercent: row.discount_percent ?? 0,
+    timeline: (row.booking_timeline ?? []).map(t => ({
+      id: t.id,
+      event: t.event,
+      note: t.note,
+      timestamp: t.created_at,
+      actor: t.actor,
+    })),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function bookingToRow(booking: AppBooking): Record<string, unknown> {
+  return {
+    id: booking.id,
+    customer_id: booking.customerId,
+    cleaner_id: isUuid(booking.cleanerId) ? booking.cleanerId : null,
+    service: booking.service,
+    status: booking.status,
+    date: booking.date,
+    time: booking.time,
+    address: booking.address,
+    city: booking.city,
+    property_type: booking.propertyType,
+    bedrooms: booking.bedrooms,
+    bathrooms: booking.bathrooms,
+    size: booking.size,
+    frequency: booking.frequency,
+    special_requests: booking.specialRequests,
+    fragrance: booking.fragrance,
+    allergies: booking.allergies,
+    access_instructions: booking.accessInstructions,
+    cleaner_notes: booking.cleanerNotes,
+    before_photos: booking.beforePhotos,
+    progress_photos: booking.progressPhotos,
+    after_photos: booking.afterPhotos,
+    priority: booking.priority ?? 'normal',
+    member_tier: booking.memberTier ?? null,
+    discount_percent: booking.discountPercent ?? 0,
+  };
+}
+
+const MEMBER_COLUMNS = ['priority', 'member_tier', 'discount_percent'];
+
+export async function insertBookingRow(booking: AppBooking): Promise<{ error: { message: string } | null }> {
+  try {
+    const full = bookingToRow(booking);
+    const { error } = await (supabase.from('bookings') as any).insert(full);
+    if (!error) return { error: null };
+    // Fall back for databases where migration 006 hasn't been applied yet.
+    if (/column|priority|member_tier|discount/i.test(error.message)) {
+      const legacy = { ...full };
+      for (const key of MEMBER_COLUMNS) delete legacy[key];
+      const { error: retryError } = await (supabase.from('bookings') as any).insert(legacy);
+      if (retryError) return { error: { message: retryError.message } };
+      return { error: null };
+    }
+    return { error: { message: error.message } };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function fetchBookingsFromDb(): Promise<{ data: AppBooking[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await fetchBookings();
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as Array<BookingRow & { booking_timeline?: TimelineRow[] }>).map(bookingFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function updateBookingRow(
+  id: string,
+  fields: Partial<{ status: BookingStatus; cleaner_id: string | null; cleaner_notes: string; before_photos: string[]; progress_photos: string[]; after_photos: string[] }>
+): Promise<{ error: { message: string } | null }> {
+  try {
+    const { error } = await (supabase.from('bookings') as any)
+      .update(fields)
+      .eq('id', id);
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function deleteBookingRow(id: string): Promise<{ error: { message: string } | null }> {
+  try {
+    const { error } = await supabase.from('bookings').delete().eq('id', id);
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+// ── Contact messages ──
+
+export async function insertContactMessage(input: {
+  name: string;
+  email: string;
+  phone: string;
+  subject: string;
+  message: string;
+}): Promise<{ data: AppContactMessage | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await (supabase.from('contact_messages') as any)
+      .insert(input)
+      .select()
+      .single();
+    if (error) return { data: null, error: { message: error.message } };
+    const row = data as ContactMessageRow;
+    return {
+      data: {
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        phone: row.phone,
+        subject: row.subject,
+        message: row.message,
+        createdAt: row.created_at,
+        read: row.read,
+      },
+      error: null,
+    };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function fetchContactMessages(): Promise<{ data: AppContactMessage[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('contact_messages')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) return { data: null, error: { message: error.message } };
+    return {
+      data: (data as ContactMessageRow[]).map(row => ({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        phone: row.phone,
+        subject: row.subject,
+        message: row.message,
+        createdAt: row.created_at,
+        read: row.read,
+      })),
+      error: null,
+    };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+// ── Notifications ──
+
+export function notificationFromRow(row: NotificationRow): AppNotification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    title: row.title,
+    message: row.message,
+    read: row.read,
+    link: row.link,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertNotification(input: {
+  user_id: string;
+  title: string;
+  message: string;
+  link: string;
+}): Promise<{ data: AppNotification | null; error: { message: string } | null }> {
+  if (!isUuid(input.user_id)) return { data: null, error: { message: 'Invalid user id' } };
+  try {
+    const { data, error } = await (supabase.from('notifications') as any)
+      .insert(input)
+      .select()
+      .single();
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: notificationFromRow(data as NotificationRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function fetchNotificationsFromDb(userId: string): Promise<{ data: AppNotification[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await fetchNotifications(userId);
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as NotificationRow[]).map(notificationFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function markNotificationReadDb(id: string): Promise<void> {
+  try {
+    await markNotificationRead(id);
+  } catch {
+    // best-effort only
+  }
+}
+
+export async function markAllNotificationsReadDb(userId: string): Promise<void> {
+  try {
+    await markAllNotificationsRead(userId);
+  } catch {
+    // best-effort only
+  }
+}
+
+// ── Partner companies & projects ─────────────────────────────────────────────
+
+export interface PartnerCompanyRow {
+  id: string;
+  name: string;
+  code: string;
+  industry: string | null;
+  website: string | null;
+  address: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export function generateCompanyCode(companyName: string): string {
+  const prefix = (companyName.replace(/[^a-zA-Z]/g, '').slice(0, 4) || 'LC').toUpperCase();
+  const rand = Math.floor(100 + Math.random() * 900);
+  return `${prefix}-${rand}`;
+}
+
+/** Create the company record for an approved partner (admin only per RLS). Retries on code collision. */
+export async function createPartnerCompany(input: {
+  name: string;
+  industry: string;
+  website: string;
+  address: string;
+  contact_email: string;
+  contact_phone: string;
+}): Promise<{ data: PartnerCompanyRow | null; error: { message: string } | null }> {
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data, error } = await (supabase.from('partner_companies') as any)
+        .insert({ ...input, code: generateCompanyCode(input.name) })
+        .select()
+        .single();
+      if (!error) return { data: data as PartnerCompanyRow, error: null };
+      if (error.code !== '23505') return { data: null, error: { message: error.message } };
+    }
+    return { data: null, error: { message: 'Could not generate a unique company code' } };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function linkPartnerApplicationCompany(appId: string, companyId: string): Promise<{ error: { message: string } | null }> {
+  try {
+    const { error } = await (supabase.from('partner_applications') as any)
+      .update({ company_id: companyId })
+      .eq('id', appId);
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+/** Tag a partner profile with its company (admin only).
+ *
+ *  profiles.company_id is frozen against direct client writes (migration 007),
+ *  so this goes through a SECURITY DEFINER function that verifies the caller is
+ *  an admin. Without it, the column would have to stay writable by every user —
+ *  which is what let a partner self-assign an arbitrary company.
+ */
+export async function setProfileCompany(
+  userId: string,
+  companyId: string
+): Promise<{ error: { message: string } | null }> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.rpc as any)('admin_set_profile_company', {
+      p_user_id: userId,
+      p_company_id: companyId,
+    });
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export function partnerProjectFromRow(row: PartnerProjectRow): AppPartnerProject {
+  return {
+    id: row.id,
+    partnerId: row.partner_id,
+    name: row.name,
+    address: row.address,
+    size: row.size,
+    units: row.units,
+    turnoverDate: row.turnover_date ?? '',
+    preferredDate: row.preferred_date ?? '',
+    requirements: row.requirements,
+    additionalInfo: row.additional_info,
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertPartnerProject(input: {
+  partner_id: string;
+  name: string;
+  address: string;
+  size: string;
+  units: string;
+  turnover_date: string | null;
+  preferred_date: string | null;
+  requirements: string;
+  additional_info: string;
+}): Promise<{ data: AppPartnerProject | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await (supabase.from('partner_projects') as any)
+      .insert(input)
+      .select()
+      .single();
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: partnerProjectFromRow(data as PartnerProjectRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+export async function fetchPartnerProjects(): Promise<{ data: AppPartnerProject[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('partner_projects')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as PartnerProjectRow[]).map(partnerProjectFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+// ─── Resume Upload (Supabase Storage) ─────────────────────────────────────────
+// Files go to the PRIVATE `resumes` bucket (see migrations 003 + 007). Access is
+// scoped to the uploader and admins — applicant PII is no longer world-readable.
+// Path shape is fixed: <userId>/<timestamp>_<random>_<sanitized-name>, which the
+// storage RLS policies rely on for the ownership check.
+
+export const RESUME_BUCKET = 'resumes';
+export const RESUME_MAX_BYTES = 5 * 1024 * 1024;
+const RESUME_ALLOWED_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
+
+export function validateResumeFile(file: File): string | null {
+  if (!RESUME_ALLOWED_TYPES.includes(file.type)) {
+    return 'Only PDF or Word documents (.pdf, .doc, .docx) are accepted.';
+  }
+  if (file.size > RESUME_MAX_BYTES) {
+    return 'File is too large. Maximum size is 5MB.';
+  }
+  return null;
+}
+
+/** Upload a resume and return its storage path.
+ *
+ *  The bucket is private, so there is no permanent public URL. Callers store the
+ *  returned `path` and generate a short-lived signed URL on demand via
+ *  getResumeSignedUrl().
+ */
+export async function uploadResume(file: File, userId: string): Promise<{ path: string }> {
+  const validationError = validateResumeFile(file);
+  if (validationError) throw new Error(validationError);
+
+  const sanitized = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+  const path = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${sanitized}`;
+
+  const { error } = await supabase.storage.from(RESUME_BUCKET).upload(path, file, {
+    contentType: file.type,
+    upsert: false,
+  });
+  if (error) throw new Error(error.message);
+
+  return { path };
+}
+
+/** Create a short-lived signed URL for a private resume object.
+ *  Works for the uploader (owner) and for admins reviewing applications.
+ */
+export async function getResumeSignedUrl(
+  path: string,
+  expiresInSeconds = 60 * 10
+): Promise<{ url: string | null; error: { message: string } | null }> {
+  const { data, error } = await supabase.storage
+    .from(RESUME_BUCKET)
+    .createSignedUrl(path, expiresInSeconds);
+
+  if (error) return { url: null, error: { message: error.message } };
+  return { url: data?.signedUrl ?? null, error: null };
 }

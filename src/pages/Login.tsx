@@ -1,17 +1,25 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import type { UserRole } from '../store';
 import {
   signIn,
   signUp,
   fetchProfile,
-  challengeAdminMfa,
+  resetPassword,
   verifyAdminMfa,
-  listMfaFactors,
 } from '../lib/supabase';
+import { useToast } from '../components/ToastContainer';
+import PasswordCriteria from '../components/PasswordCriteria';
+import {
+  validateEmail,
+  validateName,
+  validatePhone,
+  validatePassword,
+} from '../lib/validation';
 import logoImg from '../imports/image-3.png';
 import loginImage from '../imports/login-cleaning.jpg';
+import Logo from '../components/Logo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,13 +51,15 @@ type PendingMfa = {
 export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const toast = useToast();
 
-  const [mode, setMode] = useState<'login' | 'register'>(
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot-password'>(
     searchParams.get('mode') === 'register' ? 'register' : 'login'
   );
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   // OTP / MFA state
   const [pendingMfa, setPendingMfa] = useState<PendingMfa | null>(null);
@@ -58,8 +68,7 @@ export default function Login() {
   const [otpMessage, setOtpMessage] = useState('');
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  // Role selector (login form only)
-  const [loginRole, setLoginRole] = useState<UserRole>('customer');
+  // Login form (no role selector - role is determined from database)
   const [loginForm, setLoginForm] = useState<LoginForm>({
     identifier: '',
     password: '',
@@ -74,34 +83,26 @@ export default function Login() {
     companyCode: '',
     password: '',
     confirmPassword: '',
-    role: 'customer',
+    role: 'customer', // Fixed to customer - other roles created by admin
   });
 
-  // ── Dynamic labels ──────────────────────────────────────────────────────────
-  const identifierLabel =
-    loginRole === 'partner' ? 'Corporate email address'
-    : loginRole === 'cleaner' ? 'Email address'
-    : loginRole === 'admin' ? 'Admin email address'
-    : 'Email address or phone number';
-
-  const identifierPlaceholder =
-    loginRole === 'partner' ? 'company@example.com'
-    : loginRole === 'cleaner' ? 'cleaner@example.com'
-    : loginRole === 'admin' ? 'admin@example.com'
-    : 'you@example.com';
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   function portalFor(role: UserRole) {
     if (role === 'admin') return '/portal/admin';
     if (role === 'cleaner') return '/portal/cleaner';
     if (role === 'partner') return '/portal/partner';
-    return '/portal/customer';
+    return '/'; // Customers go to home page
   }
 
-  function updateLoginRole(role: UserRole) {
-    setLoginRole(role);
-    setLoginForm({ identifier: '', password: '', companyCode: '' });
-    setError('');
+  function getSafeRedirect(): string | null {
+    const redirect = searchParams.get('redirect');
+    if (!redirect) return null;
+    // Only allow internal paths, never /login or /reset-password to avoid loops
+    if (!redirect.startsWith('/')) return null;
+    if (redirect.startsWith('/login') || redirect.startsWith('/reset-password') || redirect.startsWith('/portal')) return null;
+    return redirect;
   }
 
   // ── Login ───────────────────────────────────────────────────────────────────
@@ -116,48 +117,42 @@ export default function Login() {
       // 1. Authenticate with Supabase
       const { data: authData, error: authError } = await signIn(email, loginForm.password);
       if (authError || !authData.user) {
-        setError(authError?.message ?? 'Invalid email or password.');
+        const errorMsg = authError?.message ?? 'Invalid email or password.';
+        setError(errorMsg);
+        toast.error('Login Failed', errorMsg);
         return;
       }
 
       // 2. Fetch the profile to get the role
       const profile = await fetchProfile(authData.user.id);
       if (!profile) {
-        setError('Account profile not found. Please contact support.');
+        const errorMsg = 'Account profile not found. Please contact support.';
+        setError(errorMsg);
+        toast.error('Profile Error', errorMsg);
         return;
       }
 
-      // 3. Validate the selected role matches what's stored
-      if (profile.role !== loginRole) {
-        setError(`This account is not registered as a ${loginRole}. Please select the correct account type.`);
-        return;
-      }
+      // 3. Show success message and navigate
+      toast.success(
+        'Welcome back!',
+        `Logged in as ${profile.name || profile.email}`
+      );
 
-      // 4. Admin → require MFA if enrolled
-      if (profile.role === 'admin') {
-        const { data: factorsData } = await listMfaFactors();
-        const totpFactor = factorsData?.totp?.[0];
-
-        if (totpFactor) {
-          // Factor exists — challenge it
-          const { data: challengeData, error: challengeError } = await challengeAdminMfa(totpFactor.id);
-          if (challengeError || !challengeData) {
-            setError('Failed to start MFA challenge. Please try again.');
-            return;
-          }
-          setPendingMfa({ factorId: totpFactor.id, challengeId: challengeData.id });
-          setOtp(['', '', '', '', '', '']);
-          setOtpMessage('');
-          return; // Wait for OTP screen
+      // Small delay for toast to show before navigation
+      setTimeout(() => {
+        const redirect = getSafeRedirect();
+        // Customers honor the redirect (e.g. /book, /membership); staff go to their portal
+        if (redirect && profile.role === 'customer') {
+          navigate(redirect);
+        } else {
+          navigate(portalFor(profile.role));
         }
-        // No MFA factor enrolled yet — allow login but prompt setup in the dashboard
-      }
-
-      // 5. Success — navigate to correct portal
-      navigate(portalFor(profile.role));
+      }, 300);
     } catch (err) {
       console.error('[Login]', err);
-      setError('An unexpected error occurred. Please try again.');
+      const errorMsg = 'An unexpected error occurred. Please try again.';
+      setError(errorMsg);
+      toast.error('Login Error', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -168,12 +163,33 @@ export default function Login() {
     e.preventDefault();
     setError('');
 
-    if (regForm.password !== regForm.confirmPassword) {
-      setError('Passwords do not match.');
+    // Validate all fields
+    const nameValidation = validateName(regForm.name, 'Full name');
+    if (!nameValidation.valid) {
+      setError(nameValidation.errors[0]);
       return;
     }
-    if (regForm.password.length < 8) {
-      setError('Password must be at least 8 characters.');
+
+    const emailValidation = validateEmail(regForm.email);
+    if (!emailValidation.valid) {
+      setError(emailValidation.errors[0]);
+      return;
+    }
+
+    const phoneValidation = validatePhone(regForm.phone, false); // Phone is optional
+    if (!phoneValidation.valid) {
+      setError(phoneValidation.errors[0]);
+      return;
+    }
+
+    const passwordValidation = validatePassword(regForm.password);
+    if (!passwordValidation.valid) {
+      setError(passwordValidation.errors[0]);
+      return;
+    }
+
+    if (regForm.password !== regForm.confirmPassword) {
+      setError('Passwords do not match.');
       return;
     }
 
@@ -191,24 +207,104 @@ export default function Login() {
 
       if (signUpError) {
         setError(signUpError.message);
+        toast.error('Registration Failed', signUpError.message);
         return;
       }
 
-      // Supabase sends a confirmation email by default.
-      // If email confirmations are disabled in your project settings,
-      // data.session will be non-null and we can navigate immediately.
-      if (data.session) {
-        const profile = await fetchProfile(data.user!.id);
-        navigate(portalFor(profile?.role ?? regForm.role));
-      } else {
-        // Needs email verification
+      console.log('[Register] Success:', { 
+        hasSession: !!data.session, 
+        hasUser: !!data.user,
+        user: data.user 
+      });
+
+      // If email confirmations are disabled, data.session will exist
+      // If enabled, session will be null and user needs to verify email
+      if (data.session && data.user) {
+        // User is logged in - fetch profile and navigate
+        const profile = await fetchProfile(data.user.id);
+        
+        if (profile) {
+          // Success! Show welcome message
+          toast.success(
+            'Account Created Successfully!',
+            `Welcome to Luxurious Cleaning, ${profile.name}!`
+          );
+
+          // Navigate to home for customers
+          if (profile.role === 'customer') {
+            setTimeout(() => {
+              const redirect = getSafeRedirect();
+              navigate(redirect ?? portalFor(profile.role));
+            }, 500);
+          }
+        } else {
+          // Profile not created yet (shouldn't happen with trigger)
+          const errorMsg = 'Account created but profile not found. Please try signing in.';
+          setError(errorMsg);
+          toast.warning('Almost There', errorMsg);
+          setTimeout(() => {
+            setMode('login');
+          }, 2000);
+        }
+      } else if (data.user) {
+        // Email verification required
+        toast.info(
+          'Verify Your Email',
+          'Check your inbox for a confirmation link to activate your account.'
+        );
         setPendingVerifyEmail(regForm.email.trim().toLowerCase());
         setOtp(['', '', '', '', '', '']);
         setOtpMessage('');
+      } else {
+        const errorMsg = 'Registration failed. Please try again.';
+        setError(errorMsg);
+        toast.error('Registration Error', errorMsg);
       }
     } catch (err) {
       console.error('[Register]', err);
       setError('An unexpected error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Forgot Password ─────────────────────────────────────────────────────────
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    // Validate email
+    const emailValidation = validateEmail(forgotPasswordEmail);
+    if (!emailValidation.valid) {
+      setError(emailValidation.errors[0]);
+      toast.error('Invalid Email', emailValidation.errors[0]);
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { error: resetError } = await resetPassword(forgotPasswordEmail.trim().toLowerCase());
+
+      if (resetError) {
+        setError(resetError.message);
+        toast.error('Reset Failed', resetError.message);
+        return;
+      }
+
+      const successMsg = `Password reset email sent to ${forgotPasswordEmail}. Check your inbox and click the link to reset your password.`;
+      setSuccessMessage(successMsg);
+      toast.success(
+        'Reset Email Sent!',
+        `Check ${forgotPasswordEmail} for the password reset link.`
+      );
+      setForgotPasswordEmail('');
+    } catch (err) {
+      console.error('[ForgotPassword]', err);
+      const errorMsg = 'An unexpected error occurred. Please try again.';
+      setError(errorMsg);
+      toast.error('Reset Error', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -281,8 +377,8 @@ export default function Login() {
         <img src={loginImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-navy-950/80 backdrop-blur-[2px]" />
         <div className="relative w-full max-w-lg rounded-2xl border border-gold-400/20 bg-navy-900/95 px-6 py-10 text-center shadow-2xl md:px-12">
-          <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-6 h-10 w-auto object-contain" />
-
+          <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-6 h-16 max-h-16 w-auto max-w-[280px] object-contain" />
+          
           {isAdminMfa ? (
             <>
               <h1 className="font-serif text-3xl text-cream-100 mb-2">Two-Factor Authentication</h1>
@@ -367,9 +463,9 @@ export default function Login() {
       {/* Form panel */}
       <div className="h-screen flex-1 flex flex-col justify-start overflow-y-auto px-8 py-8 md:px-12 md:py-12 lg:max-w-md xl:max-w-lg">
         <div className="mb-8">
-          <Link to="/" className="flex items-center self-start -ml-2 mb-10 translate-y-6">
-            <img src={logoImg} alt="Luxurious Cleaning Co." className="h-10 w-auto object-contain" />
-          </Link>
+          <div className="mb-6">
+            <Logo height={56} align="left" />
+          </div>
           <h1 className="font-serif text-3xl text-cream-100 mb-1">
             {mode === 'login' ? 'Welcome back' : 'Create an account'}
           </h1>
@@ -406,62 +502,40 @@ export default function Login() {
           </div>
         )}
 
+        {successMessage && (
+          <div className="bg-emerald-400/10 border border-emerald-400/25 rounded-lg px-4 py-3 text-sm text-emerald-400 mb-4">
+            {successMessage}
+          </div>
+        )}
+
         {/* ── Sign In form ── */}
         {mode === 'login' ? (
           <form onSubmit={handleLogin} className="space-y-4">
-            {/* Role selector */}
-            <div>
-              <label className="block text-xs text-cream-300 mb-1.5">Account type</label>
-              <select
-                value={loginRole}
-                onChange={e => updateLoginRole(e.target.value as UserRole)}
-                className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-3 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
-              >
-                <option value="customer">Customer</option>
-                <option value="partner">Partnered company</option>
-                <option value="cleaner">Cleaner</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-
             {/* Email / identifier */}
             <div>
-              <label className="block text-xs text-cream-300 mb-1.5">{identifierLabel}</label>
+              <label className="block text-xs text-cream-300 mb-1.5">Email address</label>
               <input
                 required
                 type="email"
                 value={loginForm.identifier}
                 onChange={e => setLoginForm(f => ({ ...f, identifier: e.target.value }))}
-                placeholder={identifierPlaceholder}
+                placeholder="you@example.com"
                 className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-3 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/40"
               />
             </div>
 
-            {/* Optional company code for partners */}
-            {loginRole === 'partner' && (
-              <div>
-                <label className="block text-xs text-cream-300 mb-1.5">
-                  Company code <span className="text-cream-300/50">(optional)</span>
-                </label>
-                <input
-                  value={loginForm.companyCode}
-                  onChange={e => setLoginForm(f => ({ ...f, companyCode: e.target.value }))}
-                  placeholder="ACG-001"
-                  className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-3 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/40"
-                />
-              </div>
-            )}
-
-            {/* Admin MFA hint */}
-            {loginRole === 'admin' && (
-              <p className="text-xs text-cream-300/60 bg-navy-800 rounded-lg px-3 py-2 border border-gold-400/10">
-                Admin accounts with an authenticator app enrolled will be prompted for a 6-digit code after the password step.
-              </p>
-            )}
-
             {/* Password */}
             <div className="relative">
-              <label className="block text-xs text-cream-300 mb-1.5">Password</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs text-cream-300">Password</label>
+                <button
+                  type="button"
+                  onClick={() => { setMode('forgot-password'); setError(''); setSuccessMessage(''); }}
+                  className="text-xs text-gold-400 hover:text-gold-300 transition-colors"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <input
                 required
                 type={showPass ? 'text' : 'password'}
@@ -485,6 +559,40 @@ export default function Login() {
               className="w-full flex items-center justify-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 font-semibold py-3 rounded-lg transition-colors disabled:opacity-60 mt-2"
             >
               {loading ? 'Signing in…' : <>Sign In <ArrowRight size={14} /></>}
+            </button>
+          </form>
+        ) : mode === 'forgot-password' ? (
+          /* ── Forgot Password form ── */
+          <form onSubmit={handleForgotPassword} className="space-y-4">
+            <div>
+              <label className="block text-xs text-cream-300 mb-1.5">Email address</label>
+              <input
+                required
+                type="email"
+                value={forgotPasswordEmail}
+                onChange={e => setForgotPasswordEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-3 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/40"
+              />
+              <p className="text-xs text-cream-300/60 mt-2">
+                Enter your email address and we'll send you a link to reset your password.
+              </p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 font-semibold py-3 rounded-lg transition-colors disabled:opacity-60"
+            >
+              {loading ? 'Sending…' : <>Send Reset Link <ArrowRight size={14} /></>}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMode('login'); setError(''); setSuccessMessage(''); }}
+              className="w-full text-xs text-cream-300 hover:text-cream-100 transition-colors"
+            >
+              ← Back to sign in
             </button>
           </form>
         ) : (
@@ -514,21 +622,8 @@ export default function Login() {
                 />
               </div>
 
-              {/* Cleaner: employee ID */}
-              {regForm.role === 'cleaner' && (
-                <div className="col-span-2">
-                  <label className="block text-xs text-cream-300 mb-1.5">Employee / Cleaner ID</label>
-                  <input
-                    value={regForm.employeeId}
-                    onChange={e => setRegForm(f => ({ ...f, employeeId: e.target.value }))}
-                    placeholder="CLN-001"
-                    className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
-                  />
-                </div>
-              )}
-
               {/* Phone */}
-              <div>
+              <div className="col-span-2">
                 <label className="block text-xs text-cream-300 mb-1.5">Phone</label>
                 <input
                   value={regForm.phone}
@@ -537,36 +632,8 @@ export default function Login() {
                 />
               </div>
 
-              {/* Account type */}
-              <div>
-                <label className="block text-xs text-cream-300 mb-1.5">Account Type</label>
-                <select
-                  value={regForm.role}
-                  onChange={e => setRegForm(f => ({ ...f, role: e.target.value as UserRole }))}
-                  className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
-                >
-                  <option value="customer">Customer</option>
-                  <option value="partner">Partnered company</option>
-                  <option value="cleaner">Cleaner</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-
-              {/* Partner: company code */}
-              {regForm.role === 'partner' && (
-                <div className="col-span-2">
-                  <label className="block text-xs text-cream-300 mb-1.5">Company code</label>
-                  <input
-                    value={regForm.companyCode}
-                    onChange={e => setRegForm(f => ({ ...f, companyCode: e.target.value }))}
-                    placeholder="ACG-001"
-                    className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
-                  />
-                </div>
-              )}
-
               {/* Password */}
-              <div className="relative">
+              <div className="col-span-2 relative">
                 <label className="block text-xs text-cream-300 mb-1.5">Password *</label>
                 <input
                   required
@@ -575,18 +642,37 @@ export default function Login() {
                   onChange={e => setRegForm(f => ({ ...f, password: e.target.value }))}
                   className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
                 />
+                {/* Password Criteria */}
+                {regForm.password && <PasswordCriteria password={regForm.password} />}
               </div>
 
               {/* Confirm password */}
-              <div>
+              <div className="col-span-2 relative">
                 <label className="block text-xs text-cream-300 mb-1.5">Confirm Password *</label>
                 <input
                   required
                   type={showPass ? 'text' : 'password'}
                   value={regForm.confirmPassword}
                   onChange={e => setRegForm(f => ({ ...f, confirmPassword: e.target.value }))}
-                  className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
+                  className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 pr-10 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40"
                 />
+                {/* Password match indicator */}
+                {regForm.confirmPassword && (
+                  <div className="absolute right-3 top-[30px]">
+                    {regForm.password === regForm.confirmPassword ? (
+                      <CheckCircle2 size={16} className="text-emerald-400" />
+                    ) : (
+                      <XCircle size={16} className="text-red-400" />
+                    )}
+                  </div>
+                )}
+                {/* Match status message */}
+                {regForm.confirmPassword && regForm.password !== regForm.confirmPassword && (
+                  <p className="text-xs text-red-300 mt-1.5">Passwords do not match</p>
+                )}
+                {regForm.confirmPassword && regForm.password === regForm.confirmPassword && regForm.password.length >= 8 && (
+                  <p className="text-xs text-emerald-400 mt-1.5">✓ Passwords match</p>
+                )}
               </div>
 
               {/* Show/hide toggle */}

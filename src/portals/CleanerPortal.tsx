@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, LogOut } from 'lucide-react';
-import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId } from '../store';
+import { useNavigate, Link } from 'react-router-dom';
+import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut } from 'lucide-react';
+import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import { updateBookingRow } from '../lib/supabase';
 
 const SAMPLE_PHOTOS = [
   'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=400&fit=crop&auto=format',
@@ -13,6 +14,8 @@ const SAMPLE_PHOTOS = [
 ];
 
 const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus | null> = {
+  awaiting_review: null,
+  rejected: null,
   confirmed: 'en_route',
   cleaner_assigned: 'en_route',
   en_route: 'in_progress',
@@ -57,18 +60,15 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
         updatedAt: new Date().toISOString(),
       };
       dispatch({ type: 'UPDATE_BOOKING', payload: updated });
+      updateBookingRow(booking.id, { status: newStatus }).then(({ error }) => {
+        if (error) console.error('[Cleaner] Status update DB sync failed:', error.message);
+      });
       // Notify customer
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id: genId('n'),
-          userId: booking.customerId,
-          title: `Booking Update — ${booking.id}`,
-          message: `Your booking status has been updated to: ${STATUS_LABELS[newStatus]}`,
-          read: false,
-          link: '/portal/customer',
-          createdAt: new Date().toISOString(),
-        },
+      void saveNotification(dispatch, {
+        userId: booking.customerId,
+        title: `Booking Update — ${booking.id}`,
+        message: `Your booking status has been updated to: ${STATUS_LABELS[newStatus]}`,
+        link: '/portal/customer',
       });
       setSaving(false);
     }, 800);
@@ -87,6 +87,9 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
     setSaving(true);
     setTimeout(() => {
       dispatch({ type: 'UPDATE_BOOKING', payload: { ...booking, cleanerNotes: note, updatedAt: new Date().toISOString() } });
+      updateBookingRow(booking.id, { cleaner_notes: note }).then(({ error }) => {
+        if (error) console.error('[Cleaner] Notes DB sync failed:', error.message);
+      });
       setSaving(false);
     }, 500);
   }
@@ -119,17 +122,18 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
         updatedAt: new Date().toISOString(),
       };
       dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id: genId('n'),
-          userId: booking.customerId,
-          title: `New Photo Update — ${booking.id}`,
-          message: `Your cleaning team has uploaded a new ${photoType} photo for Booking #${booking.id}.`,
-          read: false,
-          link: '/portal/customer',
-          createdAt: new Date().toISOString(),
-        },
+      updateBookingRow(booking.id, {
+        before_photos: updated.beforePhotos,
+        progress_photos: updated.progressPhotos,
+        after_photos: updated.afterPhotos,
+      }).then(({ error }) => {
+        if (error) console.error('[Cleaner] Photo DB sync failed:', error.message);
+      });
+      void saveNotification(dispatch, {
+        userId: booking.customerId,
+        title: `New Photo Update — ${booking.id}`,
+        message: `Your cleaning team has uploaded a new ${photoType} photo for Booking #${booking.id}.`,
+        link: '/portal/customer',
       });
       setSaving(false);
     }, 800);
@@ -279,6 +283,12 @@ export default function CleanerPortal() {
   const user = useCurrentUser()!;
   const navigate = useNavigate();
   const [tab, setTab] = useState<'active' | 'completed'>('active');
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const assignedBookings = state.bookings.filter(b => b.cleanerId === user.id);
   const active = assignedBookings.filter(b => !['completed', 'cancelled'].includes(b.status));
@@ -294,8 +304,18 @@ export default function CleanerPortal() {
     navigate('/login');
   }
 
+  function requestLogout() {
+    setConfirmation({
+      title: 'Log out?',
+      message: 'You will be signed out of your account and redirected to the login page.',
+      confirmLabel: 'Log Out',
+      onConfirm: () => { handleLogout(); setConfirmation(null); },
+    });
+  }
+
   return (
     <div className="min-h-screen bg-navy-950">
+      {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-5xl mx-auto px-6 py-6">
           <div className="flex items-start justify-between gap-4 mb-4">
@@ -303,13 +323,19 @@ export default function CleanerPortal() {
               <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-1">Cleaner Portal</div>
               <h1 className="font-serif text-3xl text-cream-100">Welcome, {user.name.split(' ')[0]}</h1>
             </div>
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
-            >
-              <LogOut size={14} />
-              Log out
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+                <ArrowLeft size={14} />
+                Back to Home
+              </Link>
+              <button
+                onClick={requestLogout}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
+              >
+                <LogOut size={14} />
+                Log out
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-4 mb-4">
             {[

@@ -1,12 +1,31 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Users, CalendarCheck, Briefcase, GraduationCap, MessageSquare,
-  CheckCircle2, XCircle, ArrowRight, UserCog, LogOut, Trash2,
+  CheckCircle2, XCircle, ArrowRight, ArrowLeft, UserCog, LogOut, Trash2, Mail, Key, FileText, Award,
 } from 'lucide-react';
-import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId } from '../store';
-import type { BookingStatus, PartnerApplication } from '../store';
+import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, profileToUser, saveNotification } from '../store';
+import { useToast } from '../components/ToastContainer';
+import type { BookingStatus, PartnerApplication, TrainingApplication, MembershipTier } from '../store';
+import {
+  signOut,
+  fetchAllProfiles,
+  isUuid,
+  updateTrainingApplicationRow,
+  deleteTrainingApplicationRow,
+  updatePartnerApplicationRow,
+  updateBookingRow,
+  deleteBookingRow,
+  createPartnerCompany,
+  linkPartnerApplicationCompany,
+  setProfileCompany,
+} from '../lib/supabase';
 import ConfirmModal from '../components/ConfirmModal';
+import { PRIORITY_LABELS, PRIORITY_COLORS, priorityRank } from '../lib/membership';
+import BookingReviewModal from '../components/BookingReviewModal';
+import ApplicationReviewModal from '../components/ApplicationReviewModal';
+import CertificateModal from '../components/CertificateModal';
+import ResumeLink from '../components/ResumeLink';
 
 const BOOKING_STATUSES: BookingStatus[] = [
   'pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'completed', 'cancelled', 'awaiting_quote',
@@ -14,21 +33,49 @@ const BOOKING_STATUSES: BookingStatus[] = [
 
 const USER_ROLE_FILTERS = ['all', 'admin', 'customer', 'cleaner', 'partner'] as const;
 const COMPANY_STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected'] as const;
+const TRAINING_STATUS_FILTERS = ['all', 'pending', 'accepted', 'scheduled', 'completed', 'rejected'] as const;
 
 export default function AdminDashboard() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
   const navigate = useNavigate();
+  const toast = useToast();
   const [tab, setTab] = useState<'overview' | 'bookings' | 'users' | 'partners' | 'training' | 'messages'>('overview');
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [userRoleFilter, setUserRoleFilter] = useState<(typeof USER_ROLE_FILTERS)[number]>('all');
   const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
+  const [trainingStatusFilter, setTrainingStatusFilter] = useState<(typeof TRAINING_STATUS_FILTERS)[number]>('all');
   const [confirmation, setConfirmation] = useState<{
     title: string;
     message: string;
     confirmLabel: string;
     onConfirm: () => void;
   } | null>(null);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [reviewingBooking, setReviewingBooking] = useState<string | null>(null);
+  const [bookingActionLoading, setBookingActionLoading] = useState(false);
+  const [reviewingApplication, setReviewingApplication] = useState<{ id: string; type: 'partner' | 'training' } | null>(null);
+  const [applicationActionLoading, setApplicationActionLoading] = useState(false);
+  const [certificateApp, setCertificateApp] = useState<TrainingApplication | null>(null);
+
+  // Fetch all users on component mount
+  useEffect(() => {
+    async function loadAllUsers() {
+      try {
+        const profiles = await fetchAllProfiles();
+        const users = profiles.map(profileToUser);
+        dispatch({ type: 'SET_ALL_USERS', payload: users });
+        console.log('[AdminDashboard] Loaded users:', users.length);
+      } catch (error) {
+        console.error('[AdminDashboard] Failed to load users:', error);
+        toast.error('Failed to Load Users', 'Could not fetch users from database');
+      } finally {
+        setUsersLoading(false);
+      }
+    }
+
+    loadAllUsers();
+  }, [dispatch, toast]);
 
   const customers = state.users.filter(u => u.role === 'customer');
   const cleaners = state.users.filter(u => u.role === 'cleaner');
@@ -39,22 +86,271 @@ export default function AdminDashboard() {
     if (companyStatusFilter === 'pending') return app.status === 'submitted' || app.status === 'under_review';
     return app.status === companyStatusFilter;
   });
+  const filteredTrainingApplications = state.trainingApplications.filter(app => {
+    if (trainingStatusFilter === 'all') return true;
+    if (trainingStatusFilter === 'pending') return app.status === 'submitted' || app.status === 'under_review';
+    return app.status === trainingStatusFilter;
+  });
   const totalBookings = state.bookings.length;
+  const awaitingReviewBookings = state.bookings.filter(b => b.status === 'awaiting_review').length;
   const pendingBookings = state.bookings.filter(b => b.status === 'pending').length;
   const activeBookings = state.bookings.filter(b => ['confirmed', 'cleaner_assigned', 'en_route', 'in_progress'].includes(b.status)).length;
   const completedBookings = state.bookings.filter(b => b.status === 'completed').length;
   const activeMembers = state.users.filter(u => u.membershipStatus === 'active').length;
   const pendingApps = state.partnerApplications.filter(p => p.status === 'submitted' || p.status === 'under_review').length;
   const trainingApps = state.trainingApplications.length;
+  const activeTrainees = state.trainingApplications.filter(a => a.status === 'accepted' || a.status === 'scheduled').length;
   const unreadMessages = state.contactMessages.filter(m => !m.read).length;
 
   function handleLogout() {
+    signOut();
     dispatch({ type: 'LOGOUT' });
     navigate('/login');
   }
 
+  function requestLogout() {
+    setConfirmation({
+      title: 'Log out?',
+      message: 'You will be signed out of the admin dashboard and redirected to the login page.',
+      confirmLabel: 'Log Out',
+      onConfirm: () => { handleLogout(); setConfirmation(null); },
+    });
+  }
+
+  function approveTrainingApp(applicationId: string) {
+    const app = state.trainingApplications.find(a => a.id === applicationId);
+    if (!app) return;
+    setApplicationActionLoading(true);
+    setTimeout(async () => {
+      if (isUuid(app.id)) {
+        const { error } = await updateTrainingApplicationRow(app.id, { status: 'accepted' });
+        if (error) console.error('[Admin] Training approve DB sync failed:', error.message);
+      }
+      dispatch({ type: 'UPDATE_TRAINING_APP', payload: { ...app, status: 'accepted' } });
+      const program = state.trainingPrograms.find(p => p.id === app.programId);
+      if (app.userId) {
+        await saveNotification(dispatch, {
+          userId: app.userId,
+          title: 'Training Application Accepted!',
+          message: `Congratulations ${app.name}! Your application for "${program?.name || 'the training program'}"${program ? ` (${program.duration})` : ''} has been accepted. Please wait for further instructions on your schedule.`,
+          link: '/portal/customer',
+        });
+      }
+      setReviewingApplication(null);
+      setApplicationActionLoading(false);
+      toast.success('Application Approved!', `${app.name} has been accepted. They have been notified with the program details.`);
+    }, 800);
+  }
+
+  function requestApproveTrainingApp(applicationId: string) {
+    const app = state.trainingApplications.find(a => a.id === applicationId);
+    const program = app ? state.trainingPrograms.find(p => p.id === app.programId) : null;
+    setConfirmation({
+      title: 'Approve training application?',
+      message: `${app?.name || 'This applicant'} will be accepted into "${program?.name || 'the program'}" and notified with the program details. No account will be created.`,
+      confirmLabel: 'Approve',
+      onConfirm: () => {
+        approveTrainingApp(applicationId);
+        setConfirmation(null);
+      },
+    });
+  }
+
+  function rejectApplication(applicationId: string, type: 'partner' | 'training') {
+    setApplicationActionLoading(true);
+    setTimeout(async () => {
+      if (type === 'partner') {
+        const app = state.partnerApplications.find(a => a.id === applicationId);
+        if (app) {
+          if (isUuid(app.id)) {
+            const { error } = await updatePartnerApplicationRow(app.id, { status: 'rejected' });
+            if (error) console.error('[Admin] Partner reject DB sync failed:', error.message);
+          }
+          dispatch({
+            type: 'UPDATE_PARTNER_APP',
+            payload: { ...app, status: 'rejected' },
+          });
+          if (app.userId) {
+            await saveNotification(dispatch, {
+              userId: app.userId,
+              title: 'Partnership Application Update',
+              message: `Thank you for your interest, ${app.contactPerson}. Your partnership application for "${app.companyName}" was not approved at this time. You may contact us at 0919 002 4136 for feedback or reapply in the future.`,
+              link: '/portal/customer',
+            });
+          }
+        }
+      } else {
+        const app = state.trainingApplications.find(a => a.id === applicationId);
+        if (app) {
+          if (isUuid(app.id)) {
+            const { error } = await updateTrainingApplicationRow(app.id, { status: 'rejected' });
+            if (error) console.error('[Admin] Training reject DB sync failed:', error.message);
+          }
+          dispatch({
+            type: 'UPDATE_TRAINING_APP',
+            payload: { ...app, status: 'rejected' },
+          });
+          const program = state.trainingPrograms.find(p => p.id === app.programId);
+          if (app.userId) {
+            await saveNotification(dispatch, {
+              userId: app.userId,
+              title: 'Training Application Update',
+              message: `Thank you for your interest, ${app.name}. Your application for "${program?.name || 'the training program'}" was not accepted at this time. You may contact us at 0919 002 4136 for feedback or apply for another program.`,
+              link: '/portal/customer',
+            });
+          }
+        }
+      }
+
+      setReviewingApplication(null);
+      setApplicationActionLoading(false);
+      toast.info('Application Rejected', `The ${type} application has been rejected. The applicant has been notified.`);
+    }, 800);
+  }
+
   function deleteBooking(bookingId: string) {
+    deleteBookingRow(bookingId).then(({ error }) => {
+      if (error) console.error('[Admin] Booking delete DB sync failed:', error.message);
+    });
     dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
+    toast.success('Booking Deleted', 'The booking has been removed');
+  }
+
+  function updateTrainingApp(appId: string, status: TrainingApplication['status']) {
+    const app = state.trainingApplications.find(a => a.id === appId);
+    if (!app) return;
+    if (isUuid(app.id)) {
+      updateTrainingApplicationRow(app.id, { status }).then(({ error }) => {
+        if (error) console.error('[Admin] Training update DB sync failed:', error.message);
+      });
+    }
+    dispatch({ type: 'UPDATE_TRAINING_APP', payload: { ...app, status } });
+    if (app.userId) {
+      void saveNotification(dispatch, {
+        userId: app.userId,
+        title: `Training Application ${status === 'completed' ? 'Completed' : 'Updated'}`,
+        message: status === 'completed'
+          ? `Congratulations! You have completed "${state.trainingPrograms.find(p => p.id === app.programId)?.name || 'your training program'}". Your certificate is ready in the admin records.`
+          : `Your training application status has been updated to: ${status.replace('_', ' ')}.`,
+        link: '/portal/customer',
+      });
+    }
+    toast.success(
+      status === 'completed' ? 'Training Completed!' : 'Training Updated',
+      `${app.name}'s record has been updated to ${status.replace('_', ' ')}.`
+    );
+  }
+
+  function requestCompleteTraining(appId: string) {
+    const app = state.trainingApplications.find(a => a.id === appId);
+    setConfirmation({
+      title: 'Mark training completed?',
+      message: `${app?.name || 'This trainee'} has finished the program duration. Their record will be marked completed and a certificate can be printed.`,
+      confirmLabel: 'Complete',
+      onConfirm: () => { updateTrainingApp(appId, 'completed'); setConfirmation(null); },
+    });
+  }
+
+  function deleteTrainingApp(appId: string) {
+    if (isUuid(appId)) {
+      deleteTrainingApplicationRow(appId).then(({ error }) => {
+        if (error) console.error('[Admin] Training delete DB sync failed:', error.message);
+      });
+    }
+    dispatch({ type: 'DELETE_TRAINING_APP', payload: appId });
+    toast.success('Trainee Removed', 'The training record has been removed.');
+  }
+
+  function requestDeleteTrainingApp(appId: string) {
+    const app = state.trainingApplications.find(a => a.id === appId);
+    setConfirmation({
+      title: 'Remove trainee?',
+      message: `${app?.name || 'This trainee'}'s training record will be permanently removed. This action cannot be undone.`,
+      confirmLabel: 'Remove',
+      onConfirm: () => { deleteTrainingApp(appId); setConfirmation(null); },
+    });
+  }
+
+  function requestRejectApplication(applicationId: string, type: 'partner' | 'training') {
+    const app = type === 'partner'
+      ? state.partnerApplications.find(a => a.id === applicationId)
+      : state.trainingApplications.find(a => a.id === applicationId);
+    const entityName = app ? ('companyName' in app ? app.companyName : app.name) : 'this application';
+    setConfirmation({
+      title: `Reject ${type} application?`,
+      message: `${entityName}'s application will be rejected. They will be notified of the decision.`,
+      confirmLabel: 'Reject',
+      onConfirm: () => {
+        rejectApplication(applicationId, type);
+        setConfirmation(null);
+      },
+    });
+  }
+
+  function acceptBooking(bookingId: string) {
+    const booking = state.bookings.find(b => b.id === bookingId);
+    if (!booking) return;
+
+    setBookingActionLoading(true);
+    setTimeout(() => {
+      const updatedBooking = {
+        ...booking,
+        status: 'pending' as BookingStatus,
+        timeline: [
+          ...booking.timeline,
+          {
+            id: genId('tl'),
+            event: 'Booking Accepted',
+            note: 'Your booking has been reviewed and accepted. We will assign a cleaner shortly.',
+            timestamp: new Date().toISOString(),
+            actor: user.name,
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+
+      dispatch({ type: 'UPDATE_BOOKING', payload: updatedBooking });
+      updateBookingRow(bookingId, { status: 'pending' }).then(({ error }) => {
+        if (error) console.error('[Admin] Booking accept DB sync failed:', error.message);
+      });
+      setReviewingBooking(null);
+      setBookingActionLoading(false);
+      
+      toast.success('Booking Accepted!', `Booking ${bookingId} has been accepted and is now pending cleaner assignment.`);
+    }, 800);
+  }
+
+  function rejectBooking(bookingId: string) {
+    const booking = state.bookings.find(b => b.id === bookingId);
+    if (!booking) return;
+
+    setBookingActionLoading(true);
+    setTimeout(() => {
+      const updatedBooking = {
+        ...booking,
+        status: 'rejected' as BookingStatus,
+        timeline: [
+          ...booking.timeline,
+          {
+            id: genId('tl'),
+            event: 'Booking Rejected',
+            note: 'Your booking request has been reviewed and could not be accommodated at this time.',
+            timestamp: new Date().toISOString(),
+            actor: user.name,
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+
+      dispatch({ type: 'UPDATE_BOOKING', payload: updatedBooking });
+      updateBookingRow(bookingId, { status: 'rejected' }).then(({ error }) => {
+        if (error) console.error('[Admin] Booking reject DB sync failed:', error.message);
+      });
+      setReviewingBooking(null);
+      setBookingActionLoading(false);
+      
+      toast.info('Booking Rejected', `Booking ${bookingId} has been rejected.`);
+    }, 800);
   }
 
   function requestDeleteBooking(bookingId: string) {
@@ -63,6 +359,24 @@ export default function AdminDashboard() {
       message: 'Are you sure you want to delete this booking? This action cannot be undone.',
       confirmLabel: 'Delete',
       onConfirm: () => { deleteBooking(bookingId); setConfirmation(null); },
+    });
+  }
+
+  function requestAcceptBooking(bookingId: string) {
+    setConfirmation({
+      title: 'Accept booking?',
+      message: `Booking ${bookingId} will be accepted and moved to pending cleaner assignment.`,
+      confirmLabel: 'Accept',
+      onConfirm: () => { acceptBooking(bookingId); setConfirmation(null); },
+    });
+  }
+
+  function requestRejectBooking(bookingId: string) {
+    setConfirmation({
+      title: 'Reject booking?',
+      message: `Booking ${bookingId} will be rejected. The customer will be notified.`,
+      confirmLabel: 'Reject',
+      onConfirm: () => { rejectBooking(bookingId); setConfirmation(null); },
     });
   }
 
@@ -84,17 +398,14 @@ export default function AdminDashboard() {
       updatedAt: new Date().toISOString(),
     };
     dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-    dispatch({
-      type: 'ADD_NOTIFICATION',
-      payload: {
-        id: genId('n'),
-        userId: booking.customerId,
-        title: `Booking Update — ${booking.id}`,
-        message: `Your booking status has been updated: ${STATUS_LABELS[newStatus]}`,
-        read: false,
-        link: '/portal/customer',
-        createdAt: new Date().toISOString(),
-      },
+    updateBookingRow(bookingId, { status: newStatus }).then(({ error }) => {
+      if (error) console.error('[Admin] Booking status DB sync failed:', error.message);
+    });
+    void saveNotification(dispatch, {
+      userId: booking.customerId,
+      title: `Booking Update — ${booking.id}`,
+      message: `Your booking status has been updated: ${STATUS_LABELS[newStatus]}`,
+      link: '/portal/customer',
     });
   }
 
@@ -126,30 +437,24 @@ export default function AdminDashboard() {
       updatedAt: new Date().toISOString(),
     };
     dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-    dispatch({
-      type: 'ADD_NOTIFICATION',
-      payload: {
-        id: genId('n'),
-        userId: booking.customerId,
-        title: `Cleaner Assigned — ${booking.id}`,
-        message: `${cleaner?.name} has been assigned to your booking on ${booking.date}.`,
-        read: false,
-        link: '/portal/customer',
-        createdAt: new Date().toISOString(),
-      },
+    updateBookingRow(bookingId, {
+      status: 'cleaner_assigned',
+      cleaner_id: isUuid(cleanerId) ? cleanerId : null,
+    }).then(({ error }) => {
+      if (error) console.error('[Admin] Assign cleaner DB sync failed:', error.message);
+    });
+    void saveNotification(dispatch, {
+      userId: booking.customerId,
+      title: `Cleaner Assigned — ${booking.id}`,
+      message: `${cleaner?.name} has been assigned to your booking on ${booking.date}.`,
+      link: '/portal/customer',
     });
     if (cleanerId) {
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id: genId('n'),
-          userId: cleanerId,
-          title: 'New Job Assignment',
-          message: `You've been assigned to Booking #${booking.id} on ${booking.date} at ${booking.time}.`,
-          read: false,
-          link: '/portal/cleaner',
-          createdAt: new Date().toISOString(),
-        },
+      void saveNotification(dispatch, {
+        userId: cleanerId,
+        title: 'New Job Assignment',
+        message: `You've been assigned to Booking #${booking.id} on ${booking.date} at ${booking.time}.`,
+        link: '/portal/cleaner',
       });
     }
   }
@@ -164,23 +469,63 @@ export default function AdminDashboard() {
     });
   }
 
+  async function provisionPartnerCompany(app: PartnerApplication): Promise<string | null> {
+    // Create the company record + link it to the application and applicant profile.
+    // Best-effort: approval still succeeds if provisioning fails.
+    if (app.companyId) return app.companyId;
+    try {
+      const { data: company, error: companyError } = await createPartnerCompany({
+        name: app.companyName,
+        industry: app.industry,
+        website: app.website,
+        address: app.address,
+        contact_email: app.email,
+        contact_phone: app.phone,
+      });
+      if (companyError || !company) {
+        console.error('[Admin] Company creation failed:', companyError?.message);
+        return null;
+      }
+      if (isUuid(app.id)) {
+        const { error } = await linkPartnerApplicationCompany(app.id, company.id);
+        if (error) console.error('[Admin] Company link failed:', error.message);
+      }
+      if (app.userId && isUuid(app.userId)) {
+        const { error } = await setProfileCompany(app.userId, company.id);
+        if (error) console.error('[Admin] Profile company tag failed:', error.message);
+      }
+      dispatch({ type: 'UPDATE_PARTNER_APP', payload: { ...app, status: 'approved', companyId: company.id } });
+      return company.id;
+    } catch (err) {
+      console.error('[Admin] Company provisioning failed:', err);
+      return null;
+    }
+  }
+
   function updatePartnerApp(app: PartnerApplication, status: PartnerApplication['status']) {
     const updated = { ...app, status };
+    if (isUuid(app.id)) {
+      updatePartnerApplicationRow(app.id, { status }).then(({ error }) => {
+        if (error) console.error('[Admin] Partner update DB sync failed:', error.message);
+      });
+    }
     dispatch({ type: 'UPDATE_PARTNER_APP', payload: updated });
+    if (status === 'approved') {
+      // Provision the company record so the partner can submit projects
+      void provisionPartnerCompany(updated).then(companyId => {
+        if (companyId) {
+          toast.success('Company Record Created', `${app.companyName} can now submit projects from the partner portal.`);
+        }
+      });
+    }
     if (app.userId) {
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id: genId('n'),
-          userId: app.userId,
-          title: `Partnership Application ${status === 'approved' ? 'Approved' : 'Updated'}`,
-          message: status === 'approved'
-            ? `Congratulations! ${app.companyName} has been approved as a Luxurious Cleaning Co. partner.`
-            : `Your partnership application status has been updated to: ${status}.`,
-          read: false,
-          link: '/portal/partner',
-          createdAt: new Date().toISOString(),
-        },
+      void saveNotification(dispatch, {
+        userId: app.userId,
+        title: `Partnership Application ${status === 'approved' ? 'Approved' : 'Updated'}`,
+        message: status === 'approved'
+          ? `Congratulations ${app.contactPerson}! "${app.companyName}" (${app.industry}) has been approved as a Luxurious Cleaning Co. partner for ${app.servicesRequired}. Our team will reach out about next steps.`
+          : `Your partnership application for "${app.companyName}" has been updated to: ${status.replace('_', ' ')}.`,
+        link: '/portal/partner',
       });
     }
   }
@@ -200,6 +545,7 @@ export default function AdminDashboard() {
       label: 'Booking Performance',
       stats: [
         { label: 'All bookings', value: totalBookings, icon: CalendarCheck, color: 'text-blue-400' },
+        { label: 'Awaiting review', value: awaitingReviewBookings, icon: CalendarCheck, color: 'text-yellow-400' },
         { label: 'Awaiting action', value: pendingBookings, icon: CalendarCheck, color: 'text-amber-400' },
         { label: 'In service', value: activeBookings, icon: CalendarCheck, color: 'text-purple-400' },
         { label: 'Completed bookings', value: completedBookings, icon: CheckCircle2, color: 'text-emerald-400' },
@@ -219,6 +565,7 @@ export default function AdminDashboard() {
       stats: [
         { label: 'Pending applications', value: pendingApps, icon: Briefcase, color: 'text-orange-400' },
         { label: 'Training applications', value: trainingApps, icon: GraduationCap, color: 'text-teal-400' },
+        { label: 'Active trainees', value: activeTrainees, icon: GraduationCap, color: 'text-emerald-400' },
         { label: 'Total messages', value: state.contactMessages.length, icon: MessageSquare, color: 'text-pink-400' },
         { label: 'Unread messages', value: unreadMessages, icon: MessageSquare, color: 'text-red-400' },
       ],
@@ -228,6 +575,44 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-navy-950">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
+      {reviewingBooking && (
+        <BookingReviewModal
+          booking={state.bookings.find(b => b.id === reviewingBooking)!}
+          onClose={() => setReviewingBooking(null)}
+          onAccept={requestAcceptBooking}
+          onReject={requestRejectBooking}
+          loading={bookingActionLoading}
+        />
+      )}
+      {reviewingApplication && (
+        <ApplicationReviewModal
+          application={
+            reviewingApplication.type === 'partner'
+              ? state.partnerApplications.find(a => a.id === reviewingApplication.id)!
+              : state.trainingApplications.find(a => a.id === reviewingApplication.id)!
+          }
+          applicationType={reviewingApplication.type}
+          onClose={() => setReviewingApplication(null)}
+          onApprove={(id) => {
+            if (reviewingApplication.type === 'partner') {
+              const app = state.partnerApplications.find(a => a.id === id);
+              if (app) requestPartnerUpdate(app, 'approved');
+            } else {
+              requestApproveTrainingApp(id);
+            }
+          }}
+          onReject={(id) => requestRejectApplication(id, reviewingApplication.type)}
+          loading={applicationActionLoading}
+        />
+      )}
+      {certificateApp && (
+        <CertificateModal
+          app={certificateApp}
+          programName={state.trainingPrograms.find(p => p.id === certificateApp.programId)?.name || 'Training Program'}
+          programDuration={state.trainingPrograms.find(p => p.id === certificateApp.programId)?.duration}
+          onClose={() => setCertificateApp(null)}
+        />
+      )}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex items-start justify-between gap-4 mb-5">
@@ -235,13 +620,19 @@ export default function AdminDashboard() {
               <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-1">Admin Dashboard</div>
               <h1 className="font-serif text-3xl text-cream-100">Control Center</h1>
             </div>
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
-            >
-              <LogOut size={15} />
-              Log out
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+                <ArrowLeft size={14} />
+                Back to Home
+              </Link>
+              <button
+                onClick={requestLogout}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
+              >
+                <LogOut size={15} />
+                Log out
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-1 border-b border-gold-400/10">
             {[
@@ -277,7 +668,7 @@ export default function AdminDashboard() {
                     <h2 className="text-xs text-gold-400 uppercase tracking-[0.18em] font-medium">{group.label}</h2>
                     <div className="h-px flex-1 bg-gold-400/10" />
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     {group.stats.map(stat => (
                       <div key={stat.label} className="bg-navy-800 border border-gold-400/10 rounded-xl p-4 min-h-[5.25rem]">
                         <div className={`text-2xl font-semibold ${stat.color} mb-0.5`}>{stat.value}</div>
@@ -345,7 +736,14 @@ export default function AdminDashboard() {
               </div>
             </div>
             <div className="space-y-4">
-              {state.bookings.filter(b => bookingFilter === 'all' || b.status === bookingFilter).map(b => {
+              {state.bookings
+                .filter(b => {
+                  if (bookingFilter === 'all') return true;
+                  if (bookingFilter === 'pending') return ['pending', 'awaiting_review', 'awaiting_quote'].includes(b.status);
+                  return b.status === bookingFilter;
+                })
+                .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
+                .map(b => {
                 const customer = state.users.find(u => u.id === b.customerId);
                 const assignedCleaner = b.cleanerId ? state.users.find(u => u.id === b.cleanerId) : null;
                 return (
@@ -359,11 +757,33 @@ export default function AdminDashboard() {
                         <div className="text-xs text-cream-300 mt-0.5">{b.customerName || customer?.name || 'Guest'} · {b.date} at {b.time} · {b.address}</div>
                         <div className="text-xs text-cream-300/70 mt-1">{b.customerEmail || customer?.email || 'No email'} · {b.customerPhone || customer?.phone || 'No phone'}</div>
                       </div>
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${STATUS_COLORS[b.status]}`}>
-                        {STATUS_LABELS[b.status]}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(b.priority ?? 'normal') !== 'normal' && (
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${PRIORITY_COLORS[b.priority ?? 'normal']}`}>
+                            {PRIORITY_LABELS[b.priority ?? 'normal']}
+                          </span>
+                        )}
+                        {b.memberTier && (
+                          <span className="text-xs font-medium px-2.5 py-1 rounded-full border text-gold-400 bg-gold-400/10 border-gold-400/25 capitalize">
+                            {b.memberTier}{(b.discountPercent ?? 0) > 0 ? ` · ${b.discountPercent}% off` : ''}
+                          </span>
+                        )}
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${STATUS_COLORS[b.status]}`}>
+                          {STATUS_LABELS[b.status]}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
+                      {/* Quick Review Button for Awaiting Review */}
+                      {b.status === 'awaiting_review' && (
+                        <button
+                          onClick={() => setReviewingBooking(b.id)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gold-400 hover:bg-gold-300 text-navy-950 px-4 py-2 rounded-lg transition-colors"
+                        >
+                          <CheckCircle2 size={13} /> Review Booking
+                        </button>
+                      )}
+
                       {/* Status change */}
                       <select
                         value={b.status}
@@ -395,7 +815,11 @@ export default function AdminDashboard() {
                   </div>
                 );
               })}
-              {state.bookings.filter(b => bookingFilter === 'all' || b.status === bookingFilter).length === 0 && (
+              {state.bookings.filter(b => {
+                if (bookingFilter === 'all') return true;
+                if (bookingFilter === 'pending') return ['pending', 'awaiting_review', 'awaiting_quote'].includes(b.status);
+                return b.status === bookingFilter;
+              }).length === 0 && (
                 <div className="text-center py-12 text-cream-300">No {bookingFilter === 'all' ? '' : bookingFilter} bookings found.</div>
               )}
             </div>
@@ -430,32 +854,46 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map(u => (
-                    <tr key={u.id} className="border-b border-gold-400/5 hover:bg-navy-700 transition-colors">
-                      <td className="px-5 py-3 text-cream-100 font-medium">{u.name}</td>
-                      <td className="px-5 py-3 text-cream-300">{u.email}</td>
-                      <td className="px-5 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
-                          u.role === 'admin' ? 'bg-red-400/10 text-red-400'
-                          : u.role === 'cleaner' ? 'bg-sky-400/10 text-sky-400'
-                          : u.role === 'partner' ? 'bg-violet-400/10 text-violet-400'
-                          : 'bg-emerald-400/10 text-emerald-400'
-                        }`}>{u.role}</span>
+                  {usersLoading ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-12 text-center">
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="animate-spin h-8 w-8 border-3 border-gold-400 border-t-transparent rounded-full" />
+                          <p className="text-cream-300 text-sm">Loading users from database...</p>
+                        </div>
                       </td>
-                      <td className="px-5 py-3 text-cream-300">{u.phone || '—'}</td>
-                      <td className="px-5 py-3">
-                        {u.membershipTier ? (
-                          <span className="text-xs text-gold-400 capitalize">{u.membershipTier}</span>
-                        ) : '—'}
-                      </td>
-                      <td className="px-5 py-3 text-cream-300 text-xs">{new Date(u.createdAt).toLocaleDateString()}</td>
                     </tr>
-                  ))}
+                  ) : filteredUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-12 text-cream-300">
+                        No users found for this role.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredUsers.map(u => (
+                      <tr key={u.id} className="border-b border-gold-400/5 hover:bg-navy-700 transition-colors">
+                        <td className="px-5 py-3 text-cream-100 font-medium">{u.name}</td>
+                        <td className="px-5 py-3 text-cream-300">{u.email}</td>
+                        <td className="px-5 py-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
+                            u.role === 'admin' ? 'bg-red-400/10 text-red-400'
+                            : u.role === 'cleaner' ? 'bg-sky-400/10 text-sky-400'
+                            : u.role === 'partner' ? 'bg-violet-400/10 text-violet-400'
+                            : 'bg-emerald-400/10 text-emerald-400'
+                          }`}>{u.role}</span>
+                        </td>
+                        <td className="px-5 py-3 text-cream-300">{u.phone || '—'}</td>
+                        <td className="px-5 py-3">
+                          {u.membershipTier ? (
+                            <span className="text-xs text-gold-400 capitalize">{u.membershipTier}</span>
+                          ) : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-cream-300 text-xs">{new Date(u.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
-              {filteredUsers.length === 0 && (
-                <div className="text-center py-12 text-cream-300">No users found for this role.</div>
-              )}
             </div>
           </div>
         )}
@@ -496,16 +934,27 @@ export default function AdminDashboard() {
                     </span>
                   </div>
                   <p className="text-sm text-cream-300 mb-4">{app.proposal}</p>
+                  {app.resumeName && (
+                    <div className="mb-4">
+                      {app.resumeUrl ? (
+                        <ResumeLink path={app.resumeUrl} name={app.resumeName} />
+                      ) : (
+                        <span className="inline-flex items-center gap-2 text-xs text-cream-300/60 border border-gold-400/10 rounded-lg px-3 py-1.5">
+                          <FileText size={13} /> {app.resumeName} (upload pending)
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="text-xs text-cream-300 mb-3">
                     Services: {app.servicesRequired} · Volume: {app.estimatedVolume}
                   </div>
                   {(app.status === 'submitted' || app.status === 'under_review') && (
                     <div className="flex gap-3">
                       <button
-                        onClick={() => requestPartnerUpdate(app, 'under_review')}
-                        className="flex items-center gap-1.5 text-xs border border-amber-400/30 text-amber-400 px-3 py-1.5 rounded-lg hover:bg-amber-400/10 transition-colors"
+                        onClick={() => setReviewingApplication({ id: app.id, type: 'partner' })}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gold-400 hover:bg-gold-300 text-navy-950 px-4 py-2 rounded-lg transition-colors"
                       >
-                        Mark Under Review
+                        <CheckCircle2 size={13} /> Review Application
                       </button>
                       <button
                         onClick={() => requestPartnerUpdate(app, 'approved')}
@@ -532,7 +981,7 @@ export default function AdminDashboard() {
                 <div>
                   <h3 className="font-serif text-xl text-cream-100 mt-8 mb-4">Partner Projects</h3>
                   {state.partnerProjects.map(project => {
-                    const partnerApp = state.partnerApplications.find(p => p.id === project.partnerId);
+                    const partnerApp = state.partnerApplications.find(p => p.id === project.partnerId || p.companyId === project.partnerId);
                     return (
                       <div key={project.id} className="bg-navy-800 border border-gold-400/10 rounded-xl p-5 mb-3">
                         <div className="flex items-start justify-between mb-2">
@@ -559,36 +1008,139 @@ export default function AdminDashboard() {
 
         {tab === 'training' && (
           <div>
-            <h2 className="font-serif text-2xl text-cream-100 mb-5">Training Applications</h2>
-            {state.trainingApplications.length === 0 ? (
-              <div className="text-center py-16 text-cream-300">No training applications yet.</div>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
+              <div className="flex items-center gap-3">
+                <h2 className="font-serif text-2xl text-cream-100">Training Applications</h2>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full border text-emerald-400 bg-emerald-400/10 border-emerald-400/20">
+                  {activeTrainees} Active {activeTrainees === 1 ? 'Trainee' : 'Trainees'}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Filter trainees by status">
+                {TRAINING_STATUS_FILTERS.map(status => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => setTrainingStatusFilter(status)}
+                    aria-pressed={trainingStatusFilter === status}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${trainingStatusFilter === status ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}
+                  >
+                    {status === 'all' ? 'All' : status === 'pending' ? 'Pending' : status.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {filteredTrainingApplications.length === 0 ? (
+              <div className="text-center py-16 text-cream-300">No training records found for this status.</div>
             ) : (
-              <div className="bg-navy-800 border border-gold-400/10 rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gold-400/10">
-                      {['Applicant', 'Email', 'Program', 'Status', 'Applied'].map(h => (
-                        <th key={h} className="text-left px-5 py-3 text-xs text-cream-300/70 font-medium">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.trainingApplications.map(app => {
-                      const program = state.trainingPrograms.find(p => p.id === app.programId);
-                      return (
-                        <tr key={app.id} className="border-b border-gold-400/5 hover:bg-navy-700">
-                          <td className="px-5 py-3 text-cream-100">{app.name}</td>
-                          <td className="px-5 py-3 text-cream-300">{app.email}</td>
-                          <td className="px-5 py-3 text-cream-200">{program?.name || 'Unknown'}</td>
-                          <td className="px-5 py-3">
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-400 capitalize">{app.status.replace('_', ' ')}</span>
-                          </td>
-                          <td className="px-5 py-3 text-cream-300 text-xs">{new Date(app.createdAt).toLocaleDateString()}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="space-y-4">
+                {filteredTrainingApplications.map(app => {
+                  const program = state.trainingPrograms.find(p => p.id === app.programId);
+                  return (
+                    <div key={app.id} className="bg-navy-800 border border-gold-400/10 rounded-xl p-5">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="font-serif text-lg text-cream-100">{app.name}</h3>
+                          <div className="text-xs text-cream-300">{app.email} · {app.phone}</div>
+                        </div>
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border capitalize ${
+                          app.status === 'accepted' || app.status === 'completed' ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
+                          : app.status === 'rejected' ? 'text-red-400 bg-red-400/10 border-red-400/20'
+                          : app.status === 'under_review' ? 'text-amber-400 bg-amber-400/10 border-amber-400/20'
+                          : app.status === 'scheduled' ? 'text-violet-400 bg-violet-400/10 border-violet-400/20'
+                          : 'text-blue-400 bg-blue-400/10 border-blue-400/20'
+                        }`}>
+                          {app.status.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <div className="mb-4">
+                        <div className="text-sm text-cream-200 mb-2">
+                          <span className="text-cream-300/70">Program:</span> {program?.name || 'Unknown'}
+                        </div>
+                        <div className="text-sm text-cream-300">
+                          <span className="text-cream-300/70">Experience:</span> {app.experience}
+                        </div>
+                        {app.resumeName && (
+                          <div className="mt-2">
+                            {app.resumeUrl ? (
+                              <ResumeLink path={app.resumeUrl} name={app.resumeName} />
+                            ) : (
+                              <span className="inline-flex items-center gap-2 text-xs text-cream-300/60 border border-gold-400/10 rounded-lg px-3 py-1.5">
+                                <FileText size={13} /> {app.resumeName} (upload pending)
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-xs text-cream-300/60 mb-3">
+                        Applied: {new Date(app.createdAt).toLocaleDateString()}
+                      </div>
+                      {(app.status === 'submitted' || app.status === 'under_review') && (
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            onClick={() => setReviewingApplication({ id: app.id, type: 'training' })}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gold-400 hover:bg-gold-300 text-navy-950 px-4 py-2 rounded-lg transition-colors"
+                          >
+                            <CheckCircle2 size={13} /> Review Application
+                          </button>
+                          <button
+                            onClick={() => requestApproveTrainingApp(app.id)}
+                            className="flex items-center gap-1.5 text-xs bg-emerald-400/15 border border-emerald-400/30 text-emerald-400 px-3 py-1.5 rounded-lg hover:bg-emerald-400/25 transition-colors"
+                          >
+                            <CheckCircle2 size={12} />Approve
+                          </button>
+                          <button
+                            onClick={() => requestRejectApplication(app.id, 'training')}
+                            className="flex items-center gap-1.5 text-xs bg-red-400/10 border border-red-400/25 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-400/20 transition-colors"
+                          >
+                            <XCircle size={12} />Reject
+                          </button>
+                        </div>
+                      )}
+                      {(app.status === 'accepted' || app.status === 'scheduled') && (
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            onClick={() => requestCompleteTraining(app.id)}
+                            className="flex items-center gap-1.5 text-xs bg-emerald-400/15 border border-emerald-400/30 text-emerald-400 px-3 py-1.5 rounded-lg hover:bg-emerald-400/25 transition-colors"
+                          >
+                            <CheckCircle2 size={12} />Mark Completed
+                          </button>
+                          <button
+                            onClick={() => requestDeleteTrainingApp(app.id)}
+                            className="flex items-center gap-1.5 text-xs bg-red-400/10 border border-red-400/25 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-400/20 transition-colors"
+                          >
+                            <Trash2 size={12} />Remove Trainee
+                          </button>
+                        </div>
+                      )}
+                      {app.status === 'completed' && (
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            onClick={() => setCertificateApp(app)}
+                            className="flex items-center gap-1.5 text-xs font-semibold bg-gold-400 hover:bg-gold-300 text-navy-950 px-4 py-2 rounded-lg transition-colors"
+                          >
+                            <Award size={12} />Print Certificate
+                          </button>
+                          <button
+                            onClick={() => requestDeleteTrainingApp(app.id)}
+                            className="flex items-center gap-1.5 text-xs bg-red-400/10 border border-red-400/25 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-400/20 transition-colors"
+                          >
+                            <Trash2 size={12} />Remove Trainee
+                          </button>
+                        </div>
+                      )}
+                      {app.status === 'rejected' && (
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            onClick={() => requestDeleteTrainingApp(app.id)}
+                            className="flex items-center gap-1.5 text-xs bg-red-400/10 border border-red-400/25 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-400/20 transition-colors"
+                          >
+                            <Trash2 size={12} />Remove Record
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

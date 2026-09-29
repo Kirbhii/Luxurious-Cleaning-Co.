@@ -1,5 +1,8 @@
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
+import { useCurrentUser } from '../store';
+import AuthPromptModal from '../components/AuthPromptModal';
 
 const SERVICES = [
   {
@@ -64,13 +67,44 @@ const SERVICES = [
     desc: 'Some spaces or situations don\'t fit a standard template. We work with you to design a service perfectly suited to your specific need.',
     includes: ['Pre- or post-event cleaning', 'Unique surface and material care', 'High-frequency sanitization programs', 'Custom scope and schedule', 'Dedicated account coordination'],
     ideal: 'Event spaces, unique properties, and custom requirements',
-    img: 'https://images.unsplash.com/photo-1563453392212-326f5e854473?w=700&h=500&fit=crop&auto=format',
+    img: 'https://images.unsplash.com/photo-1584820927498-cfe5211fd8bf?w=700&h=500&fit=crop&auto=format',
   },
 ];
 
 export default function Services() {
+  const user = useCurrentUser();
+  const navigate = useNavigate();
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [pendingService, setPendingService] = useState<string | null>(null);
+
+  function handleBookClick(e: React.MouseEvent, serviceName?: string) {
+    if (user) return; // let the Link navigate normally
+    e.preventDefault();
+    setPendingService(serviceName ?? null);
+    setAuthPromptOpen(true);
+  }
+
+  function handleBookNowClick(e: React.MouseEvent) {
+    if (user) return;
+    e.preventDefault();
+    setPendingService(null);
+    setAuthPromptOpen(true);
+  }
+
   return (
     <div className="pt-16 min-h-screen bg-navy-950">
+      <AuthPromptModal
+        open={authPromptOpen}
+        onClose={() => {
+          setAuthPromptOpen(false);
+          // If the user just logged in via the modal flow they will be
+          // redirected by Login; otherwise stay on services.
+          if (user && pendingService) {
+            navigate(`/book?service=${encodeURIComponent(pendingService)}`);
+            setPendingService(null);
+          }
+        }}
+      />
       {/* Header */}
       <section className="py-20 bg-navy-900 border-b border-gold-400/10">
         <div className="max-w-7xl mx-auto px-6">
@@ -112,6 +146,7 @@ export default function Services() {
                 <div className="text-xs text-cream-300/70 mb-5 italic">Ideal for: {service.ideal}</div>
                 <Link
                   to={`/book?service=${encodeURIComponent(service.name)}`}
+                  onClick={e => handleBookClick(e, service.name)}
                   className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                 >
                   Book {service.name} <ArrowRight size={14} />
@@ -128,7 +163,7 @@ export default function Services() {
           <h2 className="font-serif text-3xl text-cream-100 mb-4">Not Sure Which Service You Need?</h2>
           <p className="text-cream-300 mb-6">Contact our team and we'll help you choose the right service for your space.</p>
           <div className="flex flex-wrap justify-center gap-3">
-            <Link to="/book" className="flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 font-semibold px-6 py-3 rounded-lg transition-colors text-sm">
+            <Link to="/book" onClick={handleBookNowClick} className="flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 font-semibold px-6 py-3 rounded-lg transition-colors text-sm">
               Book Now <ArrowRight size={14} />
             </Link>
             <Link to="/contact" className="border border-gold-400/30 hover:border-gold-400/60 text-cream-100 text-sm px-6 py-3 rounded-lg transition-colors">

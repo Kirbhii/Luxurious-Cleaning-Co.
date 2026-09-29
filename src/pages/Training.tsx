@@ -1,15 +1,22 @@
 import { useState } from 'react';
 import { CheckCircle2, ArrowRight, Clock, Users, BookOpen } from 'lucide-react';
-import { useStore, useCurrentUser, genId } from '../store';
+import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { TrainingProgram, TrainingApplication } from '../store';
+import { useToast } from '../components/ToastContainer';
+import AuthPromptModal from '../components/AuthPromptModal';
+import ResumeUpload from '../components/ResumeUpload';
+import { uploadResume, insertTrainingApplication, isUuid } from '../lib/supabase';
 
 export default function Training() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser();
+  const toast = useToast();
   const [selectedProgram, setSelectedProgram] = useState<TrainingProgram | null>(null);
   const [applyForm, setApplyForm] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '', experience: '' });
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [successId, setSuccessId] = useState<string | null>(null);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
 
   const userApplications = state.trainingApplications.filter(a => a.userId === user?.id);
 
@@ -17,45 +24,102 @@ export default function Training() {
     return userApplications.some(a => a.programId === programId);
   }
 
-  function handleApply(e: React.FormEvent) {
+  async function handleApply(e: React.FormEvent) {
     e.preventDefault();
+    if (!user) {
+      setSelectedProgram(null);
+      setAuthPromptOpen(true);
+      return;
+    }
     if (!selectedProgram) return;
     setSubmitting(true);
-    setTimeout(() => {
-      const app: TrainingApplication = {
-        id: genId('ta'),
-        programId: selectedProgram.id,
-        userId: user?.id || null,
-        name: applyForm.name,
-        email: applyForm.email,
-        phone: applyForm.phone,
-        experience: applyForm.experience,
-        status: 'submitted',
-        createdAt: new Date().toISOString(),
-      };
+
+    // Upload resume first (optional) — application still submits if upload fails
+    let resumeName: string | null = null;
+    let resumeUrl: string | null = null;
+    if (resumeFile) {
+      resumeName = resumeFile.name;
+      try {
+        const uploaded = await uploadResume(resumeFile, user.id);
+        // Private bucket: store the storage path, not a public URL.
+        // ResumeLink mints a short-lived signed URL when an admin opens it.
+        resumeUrl = uploaded.path;
+      } catch (err) {
+        console.error('[Training] Resume upload failed:', err);
+        toast.error('Resume Upload Failed', 'Your application will be submitted without the resume file. You can contact us to send it separately.');
+      }
+    }
+
+    setTimeout(async () => {
+      // Persist to the database when the program came from it (UUID id).
+      // Sample fallback programs ('tp1'…) stay local-only.
+      let app: TrainingApplication;
+      if (isUuid(selectedProgram.id) && isUuid(user?.id)) {
+        const { data } = await insertTrainingApplication({
+          program_id: selectedProgram.id,
+          user_id: user!.id,
+          name: applyForm.name,
+          email: applyForm.email,
+          phone: applyForm.phone,
+          experience: applyForm.experience,
+          resume_name: resumeName,
+          resume_url: resumeUrl,
+        });
+        app = data ?? {
+          id: genId('ta'),
+          programId: selectedProgram.id,
+          userId: user?.id || null,
+          name: applyForm.name,
+          email: applyForm.email,
+          phone: applyForm.phone,
+          experience: applyForm.experience,
+          resumeName,
+          resumeUrl,
+          status: 'submitted',
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+        app = {
+          id: genId('ta'),
+          programId: selectedProgram.id,
+          userId: user?.id || null,
+          name: applyForm.name,
+          email: applyForm.email,
+          phone: applyForm.phone,
+          experience: applyForm.experience,
+          resumeName,
+          resumeUrl,
+          status: 'submitted',
+          createdAt: new Date().toISOString(),
+        };
+      }
       dispatch({ type: 'APPLY_TRAINING', payload: app });
       if (user) {
-        dispatch({
-          type: 'ADD_NOTIFICATION',
-          payload: {
-            id: genId('n'),
-            userId: user.id,
-            title: 'Training Application Submitted',
-            message: `Your application for "${selectedProgram.name}" has been received.`,
-            read: false,
-            link: '/portal/customer',
-            createdAt: new Date().toISOString(),
-          },
+        await saveNotification(dispatch, {
+          userId: user.id,
+          title: 'Training Application Submitted',
+          message: `Your application for "${selectedProgram.name}" has been received.`,
+          link: '/portal/customer',
         });
       }
       setSuccessId(selectedProgram.id);
       setSelectedProgram(null);
+      setResumeFile(null);
       setSubmitting(false);
     }, 1200);
   }
 
+  function handleApplyClick(program: TrainingProgram) {
+    if (!user) {
+      setAuthPromptOpen(true);
+      return;
+    }
+    setSelectedProgram(program);
+  }
+
   return (
     <div className="pt-16 min-h-screen bg-navy-950">
+      <AuthPromptModal open={authPromptOpen} onClose={() => setAuthPromptOpen(false)} redirectAfterLogin="/training" />
       <section className="py-20 bg-navy-900 border-b border-gold-400/10">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-3">Professional Development</div>
@@ -76,6 +140,11 @@ export default function Training() {
           )}
 
           <div className="space-y-6">
+            {state.trainingPrograms.length === 0 && (
+              <div className="bg-navy-800 border border-gold-400/10 rounded-2xl p-10 text-center">
+                <p className="text-cream-300 text-sm">No training programs are available right now. Please check back soon or contact us for updates.</p>
+              </div>
+            )}
             {state.trainingPrograms.map(program => (
               <div key={program.id} className="bg-navy-800 border border-gold-400/10 rounded-2xl p-8">
                 <div className="grid lg:grid-cols-3 gap-6">
@@ -84,7 +153,7 @@ export default function Training() {
                       <h2 className="font-serif text-2xl text-cream-100">{program.name}</h2>
                       {program.price !== null && (
                         <span className="text-gold-400 font-semibold text-lg ml-4">
-                          ${program.price}
+                          ₱{program.price.toLocaleString('en-PH')}
                         </span>
                       )}
                       {program.price === null && (
@@ -145,7 +214,7 @@ export default function Training() {
                       </div>
                     ) : program.slotsAvailable > 0 ? (
                       <button
-                        onClick={() => setSelectedProgram(program)}
+                        onClick={() => handleApplyClick(program)}
                         className="flex items-center justify-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold py-3 rounded-lg transition-colors"
                       >
                         Apply Now <ArrowRight size={14} />
@@ -163,12 +232,25 @@ export default function Training() {
         </div>
       </section>
 
-      {/* Application Modal */}
+      {/* Application Modal — fit-screen scrollable like membership application */}
       {selectedProgram && (
-        <div className="fixed inset-0 bg-navy-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-navy-800 border border-gold-400/20 rounded-2xl w-full max-w-lg p-8">
+        <div className="fixed inset-0 bg-navy-950/80 backdrop-blur-sm z-50 overflow-y-auto animate-fade-in">
+          <div className="flex min-h-full items-center justify-center p-4 sm:p-6">
+          <div className="bg-navy-800 border border-gold-400/20 rounded-2xl w-full max-w-lg m-auto p-8 animate-scale-in overflow-hidden flex flex-col max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)]">
+            <div className="overflow-y-auto grow">
             <h2 className="font-serif text-2xl text-cream-100 mb-1">Apply for Training</h2>
-            <p className="text-sm text-cream-300 mb-6">{selectedProgram.name}</p>
+            <p className="text-sm text-cream-300 mb-2">{selectedProgram.name}</p>
+            <div className="flex flex-wrap gap-2 mb-6">
+              <span className="text-xs bg-navy-700 border border-gold-400/15 text-cream-200 rounded-full px-3 py-1">
+                Duration: {selectedProgram.duration}
+              </span>
+              <span className="text-xs bg-navy-700 border border-gold-400/15 text-cream-200 rounded-full px-3 py-1">
+                {selectedProgram.schedule}
+              </span>
+              <span className="text-xs bg-navy-700 border border-gold-400/15 text-gold-400 rounded-full px-3 py-1">
+                {selectedProgram.price === null ? 'Free' : `₱${selectedProgram.price.toLocaleString('en-PH')}`}
+              </span>
+            </div>
             <form onSubmit={handleApply} className="space-y-4">
               <div>
                 <label className="block text-xs text-cream-300 mb-1.5">Full Name *</label>
@@ -188,8 +270,9 @@ export default function Training() {
                 <label className="block text-xs text-cream-300 mb-1.5">Relevant Experience</label>
                 <textarea rows={3} value={applyForm.experience} onChange={e => setApplyForm(f => ({ ...f, experience: e.target.value }))} className="w-full bg-navy-700 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 resize-none" placeholder="Describe any relevant cleaning or professional experience..." />
               </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setSelectedProgram(null)} className="flex-1 border border-gold-400/20 text-cream-200 text-sm py-3 rounded-lg hover:border-gold-400/40 transition-colors">
+              <ResumeUpload file={resumeFile} onChange={setResumeFile} label="Resume (optional)" />
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <button type="button" onClick={() => { setSelectedProgram(null); setResumeFile(null); }} className="flex-1 border border-gold-400/20 text-cream-200 text-sm py-3 rounded-lg hover:border-gold-400/40 transition-colors">
                   Cancel
                 </button>
                 <button type="submit" disabled={submitting} className="flex-1 flex items-center justify-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold py-3 rounded-lg transition-colors disabled:opacity-60">
@@ -197,6 +280,8 @@ export default function Training() {
                 </button>
               </div>
             </form>
+            </div>
+          </div>
           </div>
         </div>
       )}

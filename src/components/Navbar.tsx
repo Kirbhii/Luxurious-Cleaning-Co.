@@ -2,20 +2,25 @@ import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Menu, X, Bell, ChevronDown, LogOut, User, LayoutDashboard } from 'lucide-react';
 import { useStore, useCurrentUser, useNotifications } from '../store';
-import { signOut } from '../lib/supabase';
+import { useToast } from './ToastContainer';
+import ConfirmModal from './ConfirmModal';
+import { signOut, markNotificationReadDb, markAllNotificationsReadDb, isUuid } from '../lib/supabase';
 import logoImg from '../imports/image-3.png';
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
   const { dispatch } = useStore();
   const user = useCurrentUser();
   const navigate = useNavigate();
   const location = useLocation();
+  const toast = useToast();
   const notifications = useNotifications(user?.id);
   const unread = notifications.filter(n => !n.read).length;
 
   const navLinks = [
+    { to: '/', label: 'Home' },
     { to: '/services', label: 'Services' },
     { to: '/membership', label: 'Membership' },
     { to: '/training', label: 'Training' },
@@ -34,7 +39,14 @@ export default function Navbar() {
   async function handleLogout() {
     await signOut();
     dispatch({ type: 'LOGOUT' });
+    toast.success('Logged Out', 'You have been successfully signed out.');
     navigate('/');
+    setMenuOpen(false);
+    setLogoutConfirm(false);
+  }
+
+  function confirmLogout() {
+    setLogoutConfirm(true);
     setMenuOpen(false);
   }
 
@@ -43,15 +55,16 @@ export default function Navbar() {
   }
 
   return (
+    <>
     <header className="fixed top-0 left-0 right-0 z-50 bg-navy-950/97 backdrop-blur-md border-b border-gold-400/15">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
         {/* Logo */}
-        <Link to="/" className="flex items-center group" onClick={() => setMenuOpen(false)}>
-          <img src={logoImg} alt="Luxurious Cleaning Co." className="h-10 w-auto object-contain" />
-        </Link>
+        <div className="flex items-center">
+          <img src={logoImg} alt="Luxurious Cleaning Co." className="h-12 max-h-12 w-auto max-w-[240px] object-contain" />
+        </div>
 
         {/* Desktop Nav */}
-        <nav className="hidden lg:flex items-center gap-6">
+        <nav className="hidden md:flex items-center gap-6">
           {navLinks.map(link => (
             <Link
               key={link.to}
@@ -86,7 +99,7 @@ export default function Navbar() {
                       <span className="text-sm font-medium text-cream-100">Notifications</span>
                       {unread > 0 && (
                         <button
-                          onClick={() => { dispatch({ type: 'MARK_ALL_READ', payload: user.id }); }}
+                          onClick={() => { dispatch({ type: 'MARK_ALL_READ', payload: user.id }); void markAllNotificationsReadDb(user.id); }}
                           className="text-xs text-gold-400 hover:text-gold-300"
                         >
                           Mark all read
@@ -101,6 +114,7 @@ export default function Navbar() {
                           key={n.id}
                           onClick={() => {
                             dispatch({ type: 'MARK_NOTIFICATION_READ', payload: n.id });
+                            if (isUuid(n.id)) void markNotificationReadDb(n.id);
                             setNotifOpen(false);
                             navigate(n.link);
                           }}
@@ -141,7 +155,7 @@ export default function Navbar() {
                     <Link to={portalPath} onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-cream-200 hover:bg-navy-700 hover:text-cream-50 transition-colors">
                       <LayoutDashboard size={13} />Portal
                     </Link>
-                    <button onClick={handleLogout} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 hover:bg-navy-700 transition-colors">
+                    <button onClick={confirmLogout} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 hover:bg-navy-700 transition-colors">
                       <LogOut size={13} />Sign Out
                     </button>
                   </div>
@@ -160,7 +174,7 @@ export default function Navbar() {
           )}
 
           {/* Mobile menu toggle */}
-          <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden w-9 h-9 flex items-center justify-center">
+          <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden w-9 h-9 flex items-center justify-center">
             {menuOpen ? <X size={20} className="text-cream-100" /> : <Menu size={20} className="text-cream-100" />}
           </button>
         </div>
@@ -168,7 +182,7 @@ export default function Navbar() {
 
       {/* Mobile menu */}
       {menuOpen && (
-        <div className="lg:hidden bg-navy-900 border-t border-gold-400/10 px-6 py-4 space-y-1">
+        <div className="md:hidden bg-navy-900 border-t border-gold-400/10 px-6 py-4 space-y-1">
           {navLinks.map(link => (
             <Link
               key={link.to}
@@ -183,9 +197,9 @@ export default function Navbar() {
             {user ? (
               <>
                 <Link to={portalPath} onClick={() => setMenuOpen(false)} className="flex items-center gap-2 py-2 text-sm text-gold-400">
-                  <LayoutDashboard size={14} />{user.role === 'customer' ? 'Customer Portal' : 'My Portal'}
+                  <LayoutDashboard size={14} />Portal
                 </Link>
-                <button onClick={handleLogout} className="flex items-center gap-2 py-2 text-sm text-red-400">
+                <button onClick={confirmLogout} className="flex items-center gap-2 py-2 text-sm text-red-400">
                   <LogOut size={14} />Sign Out
                 </button>
               </>
@@ -199,5 +213,17 @@ export default function Navbar() {
         </div>
       )}
     </header>
+
+      {/* Logout Confirmation Modal — rendered outside header so fixed positioning centers on viewport, consistent with ConfirmModal used app-wide */}
+      {logoutConfirm && (
+        <ConfirmModal
+          title="Sign Out?"
+          message="Are you sure you want to sign out? You'll need to log in again to access your account."
+          confirmLabel="Sign Out"
+          onConfirm={handleLogout}
+          onCancel={() => setLogoutConfirm(false)}
+        />
+      )}
+    </>
   );
 }

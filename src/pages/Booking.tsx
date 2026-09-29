@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { ArrowRight, ArrowLeft, CheckCircle2, Copy, CalendarDays } from 'lucide-react';
-import { useStore, useCurrentUser, genId, genBookingId } from '../store';
+import { ArrowRight, ArrowLeft, CheckCircle2, Copy, CalendarDays, Crown, Lock, Zap } from 'lucide-react';
+import { useStore, useCurrentUser, genId, genBookingId, saveNotification } from '../store';
+import { useToast } from '../components/ToastContainer';
+import AuthPromptModal from '../components/AuthPromptModal';
+import LocationSelect, { EMPTY_LOCATION } from '../components/LocationSelect';
+import type { LocationValue } from '../components/LocationSelect';
+import { insertBookingRow, isUuid } from '../lib/supabase';
+import { TIER_DISCOUNT, TIER_NAMES, GOLD_ONLY_SERVICES, priorityForTier, SERVICE_CATALOG, serviceInfo, memberPrice, formatPeso } from '../lib/membership';
 import type { Booking } from '../store';
-
-const SERVICES = [
-  'Residential Cleaning', 'Deep Cleaning', 'Move-In / Move-Out Cleaning',
-  'Post-Construction Cleaning', 'Commercial Cleaning', 'Condo Cleaning',
-  'Office Cleaning', 'Specialized Cleaning',
-];
 
 const PROPERTY_TYPES = ['Condo', 'House', 'Townhouse', 'Apartment', 'Office', 'Commercial', 'Other'];
 const FREQUENCIES = ['One-time', 'Weekly', 'Bi-weekly', 'Monthly', 'Custom'];
@@ -29,10 +29,19 @@ export default function Booking() {
   const { dispatch } = useStore();
   const user = useCurrentUser();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [step, setStep] = useState<Step>('service');
   const [bookingRef, setBookingRef] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [urgent, setUrgent] = useState(false);
+
+  // Membership benefit wiring — only active members get rates, queue priority,
+  // and (Gold) urgent requests + exclusive services.
+  const memberTier = user?.membershipStatus === 'active' ? user.membershipTier ?? null : null;
+  const memberDiscount = memberTier ? TIER_DISCOUNT[memberTier] : 0;
+  const isGold = memberTier === 'gold';
 
   const [form, setForm] = useState({
     service: searchParams.get('service') || '',
@@ -41,6 +50,7 @@ export default function Booking() {
     phone: user?.phone || '',
     address: '',
     city: '',
+    barangay: '',
     propertyType: '',
     bedrooms: '2',
     bathrooms: '1',
@@ -55,12 +65,39 @@ export default function Booking() {
   });
 
   const stepIndex = STEPS.indexOf(step);
+  const formTopRef = useRef<HTMLDivElement>(null);
+
+  // Each step starts at the top of the form instead of inheriting
+  // the previous step's scroll position (fixed navbar offset included).
+  useEffect(() => {
+    formTopRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  }, [step]);
+  const isGoldOnlyService = GOLD_ONLY_SERVICES.includes(form.service);
+  const canBookGoldService = !isGoldOnlyService || isGold;
 
   function set(key: string, val: string) {
     setForm(f => ({ ...f, [key]: val }));
   }
 
+  /** Picking a service auto-fills the matching property type (still editable). */
+  function selectService(name: string) {
+    const info = serviceInfo(name);
+    setForm(f => ({ ...f, service: name, propertyType: info ? info.propertyType : f.propertyType }));
+  }
+
+  const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION);
+
+  /** PSGC dropdowns sync the city/barangay booking fields. */
+  function handleLocation(v: LocationValue) {
+    setLocation(v);
+    setForm(f => ({ ...f, city: v.city, barangay: v.barangay }));
+  }
+
   function nextStep() {
+    if (!user) {
+      setAuthPromptOpen(true);
+      return;
+    }
     const next = STEPS[stepIndex + 1];
     if (next) setStep(next);
   }
@@ -71,13 +108,18 @@ export default function Booking() {
   }
 
   function canProceed() {
-    if (step === 'service') return !!form.service;
-    if (step === 'details') return !!(form.name && form.email && form.phone && form.address && form.city && form.propertyType && form.date);
+    if (step === 'service') return !!form.service && canBookGoldService;
+    if (step === 'details') return !!(form.name && form.email && form.phone && form.address && form.city && form.barangay && form.propertyType && form.date);
     return true;
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
+    if (!user) {
+      setAuthPromptOpen(true);
+      return;
+    }
     const id = genBookingId();
+    const wantsUrgent = isGold && urgent;
     const booking: Booking = {
       id,
       customerId: user?.id || 'guest',
@@ -85,17 +127,17 @@ export default function Booking() {
       customerEmail: form.email,
       customerPhone: form.phone,
       service: form.service,
-      status: 'pending',
+      status: 'awaiting_review',
       date: form.date,
       time: form.time,
-      address: form.address,
+      address: form.barangay ? `${form.address}, Brgy. ${form.barangay}` : form.address,
       city: form.city,
       propertyType: form.propertyType,
       bedrooms: parseInt(form.bedrooms),
       bathrooms: parseInt(form.bathrooms),
       size: form.size,
       frequency: form.frequency,
-      specialRequests: form.specialRequests,
+      specialRequests: wantsUrgent ? `[URGENT REQUEST] ${form.specialRequests}`.trim() : form.specialRequests,
       fragrance: form.fragrance,
       allergies: form.allergies,
       accessInstructions: form.accessInstructions,
@@ -107,28 +149,43 @@ export default function Booking() {
       timeline: [{
         id: genId('tl'),
         event: 'Booking Submitted',
-        note: 'Your booking has been received and is pending review.',
+        note: `Your booking has been received and is pending review.${memberTier ? ` ${TIER_NAMES[memberTier]} member rate (${memberDiscount}% off) applied.` : ''}${wantsUrgent ? ' Flagged as URGENT — operations team will respond first.' : ''}`,
         timestamp: new Date().toISOString(),
         actor: 'System',
       }],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      priority: priorityForTier(memberTier, wantsUrgent),
+      memberTier,
+      discountPercent: memberDiscount,
     };
+    // Persist to the database (best-effort) — falls back to local-only.
+    if (isUuid(user?.id)) {
+      const { error } = await insertBookingRow({ ...booking, customerId: user!.id });
+      if (error) {
+        console.error('[Booking] Database insert failed, keeping local copy:', error.message);
+        toast.error(
+          'Booking Saved Locally Only',
+          `Could not save to the database (${error.message}). Your booking is kept on this device — please contact support with reference ${id}.`
+        );
+      }
+    }
     dispatch({ type: 'ADD_BOOKING', payload: booking });
     if (user) {
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id: genId('n'),
-          userId: user.id,
-          title: `Booking Received — ${id}`,
-          message: `Your ${form.service} booking for ${form.date} has been submitted. Reference: ${id}`,
-          read: false,
-          link: '/portal/customer',
-          createdAt: new Date().toISOString(),
-        },
+      await saveNotification(dispatch, {
+        userId: user.id,
+        title: `Booking Received — ${id}`,
+        message: `Your ${form.service} booking for ${form.date} has been submitted. Reference: ${id}.${wantsUrgent ? ' Flagged as URGENT.' : ''}${memberTier ? ` ${memberDiscount}% member rate applied.` : ''}`,
+        link: '/portal/customer',
       });
     }
+    
+    // Show success toast
+    toast.success(
+      'Booking Confirmed!',
+      `Your ${form.service} appointment for ${form.date} has been submitted.${wantsUrgent ? ' Urgent request flagged.' : ''}`
+    );
+    
     setBookingRef(id);
   }
 
@@ -136,6 +193,7 @@ export default function Booking() {
     if (bookingRef) {
       navigator.clipboard.writeText(bookingRef);
       setCopied(true);
+      toast.success('Copied!', 'Booking reference copied to clipboard');
       setTimeout(() => setCopied(false), 2000);
     }
   }
@@ -163,9 +221,9 @@ export default function Booking() {
           </div>
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs text-cream-300 justify-center">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />Status: <span className="text-amber-400 font-medium">Pending Review</span>
+              <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />Status: <span className="text-yellow-400 font-medium">Awaiting Review</span>
             </div>
-            <p className="text-xs text-cream-300">We will confirm your booking within a few hours and assign a cleaner.</p>
+            <p className="text-xs text-cream-300">Our team will review your booking request and get back to you shortly.</p>
           </div>
           <div className="flex gap-3 mt-8 justify-center">
             {user ? (
@@ -188,6 +246,7 @@ export default function Booking() {
 
   return (
     <div className="pt-16 min-h-screen bg-navy-950">
+      <AuthPromptModal open={authPromptOpen} onClose={() => setAuthPromptOpen(false)} redirectAfterLogin="/book" />
       <section className="py-12 bg-navy-900 border-b border-gold-400/10">
         <div className="max-w-3xl mx-auto px-6">
           <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-2">Online Booking</div>
@@ -218,25 +277,63 @@ export default function Booking() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-6 py-10 min-h-[42rem]">
+      <div ref={formTopRef} className="max-w-3xl mx-auto px-6 py-10 min-h-[42rem] scroll-mt-20">
         {/* Step 1: Service */}
         {step === 'service' && (
           <div>
             <h2 className="font-serif text-2xl text-cream-100 mb-6">Select a Service</h2>
+            {memberTier && (
+              <div className="flex items-center gap-2 bg-gold-400/10 border border-gold-400/25 rounded-xl px-4 py-3 mb-5 text-sm">
+                <Crown size={15} className="text-gold-400 shrink-0" />
+                <span className="text-cream-200">
+                  <strong className="text-gold-400">{TIER_NAMES[memberTier]} member</strong> — {memberDiscount}% member rate auto-applied + priority queue.
+                </span>
+              </div>
+            )}
             <div className="grid md:grid-cols-2 gap-3 mb-8">
-              {SERVICES.map(s => (
-                <button
-                  key={s}
-                  onClick={() => set('service', s)}
-                  className={`text-left p-5 rounded-xl border transition-all ${
-                    form.service === s
-                      ? 'bg-gold-400/10 border-gold-400/50 ring-1 ring-gold-400/30'
-                      : 'bg-navy-800 border-gold-400/10 hover:border-gold-400/30'
-                  }`}
-                >
-                  <div className={`text-sm font-medium ${form.service === s ? 'text-gold-400' : 'text-cream-100'}`}>{s}</div>
-                </button>
-              ))}
+              {SERVICE_CATALOG.map(info => {
+                const locked = !!info.goldOnly && !isGold;
+                const selected = form.service === info.name;
+                const price = memberTier ? memberPrice(info.price, memberTier) : info.price;
+                return (
+                  <button
+                    key={info.name}
+                    disabled={locked}
+                    onClick={() => selectService(info.name)}
+                    className={`text-left p-5 rounded-xl border transition-all ${
+                      locked
+                        ? 'bg-navy-800/60 border-gold-400/10 opacity-60 cursor-not-allowed'
+                        : selected
+                        ? 'bg-gold-400/10 border-gold-400/50 ring-1 ring-gold-400/30'
+                        : 'bg-navy-800 border-gold-400/10 hover:border-gold-400/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`flex items-center gap-2 text-sm font-medium ${selected && !locked ? 'text-gold-400' : 'text-cream-100'}`}>
+                        {locked && <Lock size={13} className="text-gold-400 shrink-0" />}
+                        {info.name}
+                      </div>
+                      <div className="text-xs font-semibold text-gold-400 whitespace-nowrap">
+                        {memberTier && price !== info.price ? (
+                          <><span className="text-cream-300/60 line-through font-normal mr-1">{formatPeso(info.price)}</span>{formatPeso(price)}</>
+                        ) : (
+                          <>from {formatPeso(info.price)}</>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-xs text-cream-300 mt-1.5 leading-relaxed">{info.description}</div>
+                    <div className="text-[11px] mt-1.5">
+                      {locked ? (
+                        <span className="inline-flex items-center gap-1 text-gold-400"><Crown size={11} /> Gold-exclusive — Gold membership required</span>
+                      ) : info.goldOnly ? (
+                        <span className="inline-flex items-center gap-1 text-gold-400"><Crown size={11} /> Gold-exclusive service</span>
+                      ) : (
+                        <span className="text-cream-300/60">Best for: {info.propertyType} properties</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -273,16 +370,11 @@ export default function Booking() {
                   </div>
                 </div>
               )}
-              <div className="grid md:grid-cols-3 gap-4">
-                <div className="md:col-span-2">
-                  <label className="block text-xs text-cream-300 mb-1.5">Property Address *</label>
-                  <input required value={form.address} onChange={e => set('address', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" placeholder="123 Main St, Unit 4" />
-                </div>
-                <div>
-                  <label className="block text-xs text-cream-300 mb-1.5">City *</label>
-                  <input required value={form.city} onChange={e => set('city', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" placeholder="Toronto, ON" />
-                </div>
+              <div>
+                <label className="block text-xs text-cream-300 mb-1.5">Street / Building Address *</label>
+                <input required value={form.address} onChange={e => set('address', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" placeholder="123 Main St, Unit 4" />
               </div>
+              <LocationSelect value={location} onChange={handleLocation} required tone="navy800" />
               <div className="grid md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs text-cream-300 mb-1.5">Property Type *</label>
@@ -290,6 +382,7 @@ export default function Booking() {
                     <option value="">Select</option>
                     {PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
+                  <p className="text-[11px] text-cream-300/50 mt-1">Auto-selected from service — change if needed.</p>
                 </div>
                 <div>
                   <label className="block text-xs text-cream-300 mb-1.5">Bedrooms</label>
@@ -331,6 +424,32 @@ export default function Booking() {
                   </select>
                 </div>
               </div>
+              {isGold && (
+                <button
+                  type="button"
+                  onClick={() => setUrgent(u => !u)}
+                  className={`w-full flex items-start gap-3 text-left rounded-xl border p-4 transition-all ${
+                    urgent ? 'bg-red-400/10 border-red-400/50 ring-1 ring-red-400/30' : 'bg-navy-800 border-gold-400/15 hover:border-gold-400/40'
+                  }`}
+                >
+                  <span className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${urgent ? 'bg-red-400 border-red-400 text-navy-950' : 'border-gold-400/30 text-transparent'}`}>
+                    <CheckCircle2 size={13} />
+                  </span>
+                  <span>
+                    <span className="flex items-center gap-1.5 text-sm font-semibold text-cream-100">
+                      <Zap size={13} className="text-red-400" /> Urgent request — same-day / next-day
+                    </span>
+                    <span className="block text-xs text-cream-300 mt-1">
+                      Gold benefit: your booking jumps to the front of the operations queue. Subject to availability — the team responds first to urgent requests.
+                    </span>
+                  </span>
+                </button>
+              )}
+              {memberTier && (
+                <div className="text-xs text-cream-300 bg-gold-400/5 border border-gold-400/15 rounded-lg px-4 py-2.5">
+                  <strong className="text-gold-400">{TIER_NAMES[memberTier]} member rate ({memberDiscount}% off)</strong> will be auto-applied to this booking.
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -371,11 +490,21 @@ export default function Booking() {
             <div className="bg-navy-800 border border-gold-400/15 rounded-xl p-6 mb-6 space-y-4">
               {[
                 { label: 'Service', value: form.service },
+                { label: 'Estimated price', value: (() => {
+                  const info = serviceInfo(form.service);
+                  if (!info) return 'To be quoted';
+                  const final = memberTier ? memberPrice(info.price, memberTier) : info.price;
+                  return memberTier && final !== info.price
+                    ? `${formatPeso(info.price)} → ${formatPeso(final)} (${TIER_NAMES[memberTier]} ${memberDiscount}% off, mock rate)`
+                    : `${formatPeso(final)} starting (mock rate)`;
+                })() },
                 { label: 'Date & Time', value: `${new Date(form.date + 'T00:00:00').toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} at ${parseInt(form.time) > 12 ? `${parseInt(form.time) - 12}:00 PM` : `${parseInt(form.time)}:00 AM`}` },
                 { label: 'Address', value: `${form.address}, ${form.city}` },
                 { label: 'Property', value: `${form.propertyType} · ${form.bedrooms} bed / ${form.bathrooms} bath${form.size ? ` · ${form.size}` : ''}` },
                 { label: 'Frequency', value: form.frequency },
                 { label: 'Fragrance', value: form.fragrance },
+                ...(memberTier ? [{ label: 'Member rate', value: `${TIER_NAMES[memberTier]} — ${memberDiscount}% off auto-applied`} ] : []),
+                ...(isGold && urgent ? [{ label: 'Request type', value: 'URGENT — same-day / next-day (subject to availability)' }] : []),
                 ...(form.allergies ? [{ label: 'Allergies', value: form.allergies }] : []),
                 ...(form.specialRequests ? [{ label: 'Special Requests', value: form.specialRequests }] : []),
                 ...(form.accessInstructions ? [{ label: 'Access', value: form.accessInstructions }] : []),

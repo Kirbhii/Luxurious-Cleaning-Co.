@@ -50,3 +50,230 @@ body,
 *::-webkit-scrollbar { width: 5px; height: 5px; }
 *::-webkit-scrollbar-thumb { background: rgba(245, 166, 35, 0.25); border-radius: 3px; }
 *::-webkit-scrollbar-track { background: transparent; }
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+.animate-slide-in-up {
+  animation: slide-in-up 0.4s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out;
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite linear;
+  background: linear-gradient(
+    90deg,
+    rgba(245, 166, 35, 0.1) 0%,
+    rgba(245, 166, 35, 0.3) 50%,
+    rgba(245, 166, 35, 0.1) 100%
+  );
+  background-size: 1000px 100%;
+}
+
+/* Smooth page transitions */
+.page-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+/* Button hover effects */
+.btn-hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn-hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(245, 166, 35, 0.2);
+}
+
+/* Card hover effects */
+.card-hover {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+}
+
+/* Input focus effects */
+input:focus,
+textarea:focus,
+select:focus {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Smooth opacity transitions */
+.transition-opacity-fast {
+  transition: opacity 0.15s ease;
+}
+
+.transition-opacity-normal {
+  transition: opacity 0.3s ease;
+}
+
+/* Loading skeleton */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(28, 25, 22, 1) 0%,
+    rgba(38, 34, 25, 1) 50%,
+    rgba(28, 25, 22, 1) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ─── Layout Stabilization ───────────────────────────────────────────────── */
+
+/* Prevent layout shift by ensuring consistent viewport */
+html {
+  overflow-y: scroll; /* Always show scrollbar to prevent horizontal shift */
+}
+
+/* Ensure consistent box-sizing */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Prevent images from causing layout shift */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Container width constraints to prevent content shift */
+.container-narrow {
+  max-width: 768px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+.container-standard {
+  max-width: 1024px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+.container-wide {
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+/* Consistent page wrapper */
+.page-wrapper {
+  padding-top: 4rem; /* 64px - matches navbar height */
+  min-height: 100vh;
+  background-color: #0E0C09;
+}
+
+/* Prevent flash of unstyled content */
+.page-content {
+  opacity: 1;
+  transition: opacity 0.2s ease-in;
+}
+
+.page-content.loading {
+  opacity: 0;
+}
+
+/* Consistent section spacing */
+.section-spacing-sm {
+  padding-top: 3rem;
+  padding-bottom: 3rem;
+}
+
+.section-spacing-md {
+  padding-top: 4rem;
+  padding-bottom: 4rem;
+}
+
+.section-spacing-lg {
+  padding-top: 5rem;
+  padding-bottom: 5rem;
+}
+
+/* Consistent header spacing */
+.page-header {
+  padding-top: 5rem;
+  padding-bottom: 5rem;
+  background-color: #141210;
+  border-bottom: 1px solid rgba(245, 166, 35, 0.1);
+}

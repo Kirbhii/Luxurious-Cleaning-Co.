@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { Phone, Mail, MapPin, Clock, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useStore, useCurrentUser, genId } from '../store';
+import type { ContactMessage } from '../store';
+import { useToast } from '../components/ToastContainer';
+import { insertContactMessage } from '../lib/supabase';
 
 export default function Contact() {
   const { dispatch } = useStore();
   const user = useCurrentUser();
+  const toast = useToast();
   const [form, setForm] = useState({
     name: user?.name || '',
     email: user?.email || '',
@@ -22,16 +26,23 @@ export default function Contact() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
-    setTimeout(() => {
-      dispatch({
-        type: 'SUBMIT_CONTACT',
-        payload: {
-          id: genId('msg'),
-          ...form,
-          createdAt: new Date().toISOString(),
-          read: false,
-        },
-      });
+    setTimeout(async () => {
+      // Persist to the database (best-effort, public insert) — falls back to local-only.
+      const { data } = await insertContactMessage({ ...form });
+      const message: ContactMessage = data ?? {
+        id: genId('msg'),
+        ...form,
+        createdAt: new Date().toISOString(),
+        read: false,
+      };
+      dispatch({ type: 'SUBMIT_CONTACT', payload: message });
+      
+      // Show success toast
+      toast.success(
+        'Message Sent!',
+        "We've received your message and will respond within 24 hours."
+      );
+      
       setSubmitting(false);
       setSubmitted(true);
     }, 1000);
@@ -54,9 +65,9 @@ export default function Contact() {
           {/* Contact info */}
           <div className="lg:col-span-2 space-y-6">
             {[
-              { icon: Phone, label: 'Phone', value: '+1 416-555-LUXE', sub: 'Mon–Sat, 8am–7pm EST' },
-              { icon: Mail, label: 'Email', value: 'hello@luxuriouscleaning.ca', sub: 'We respond within 24 hours' },
-              { icon: MapPin, label: 'Service Area', value: 'Greater Toronto Area', sub: 'Toronto, Mississauga, Vaughan & more' },
+              { icon: Phone, label: 'Phone', value: '0919 002 4136', sub: 'Mon–Sat, 8am–7pm PHT' },
+              { icon: Mail, label: 'Email', value: 'luxuriouscleaning.klassic@gmail.com', sub: 'We respond within 24 hours' },
+              { icon: MapPin, label: 'Address', value: 'Atlanta Centre, 31 Annapolis Street, San Juan City, Metro Manila', sub: 'Serving Metro Manila & nearby areas' },
               { icon: Clock, label: 'Hours', value: 'Mon–Sat: 8am–7pm', sub: 'Sunday: By appointment' },
             ].map(item => (
               <div key={item.label} className="flex items-start gap-4">

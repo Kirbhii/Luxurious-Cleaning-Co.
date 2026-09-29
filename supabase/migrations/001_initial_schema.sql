@@ -54,6 +54,10 @@ CREATE TABLE public.profiles (
   permissions     TEXT[] NOT NULL DEFAULT '{}',
   -- e.g. '{manage_users,approve_partners,manage_bookings}'
 
+  -- PIN for staff (cleaner, admin, partner)
+  pin_hash        TEXT,                  -- bcrypt hash of 4-6 digit PIN
+  pin_created_at  TIMESTAMPTZ,
+
   -- Membership (customers)
   membership_tier   public.membership_tier,
   membership_status public.membership_status NOT NULL DEFAULT 'none',

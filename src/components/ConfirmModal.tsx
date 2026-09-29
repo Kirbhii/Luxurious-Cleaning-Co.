@@ -11,7 +11,7 @@ type ConfirmModalProps = {
 export default function ConfirmModal({ title, message, confirmLabel, onConfirm, onCancel }: ConfirmModalProps) {
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 px-5 backdrop-blur-sm"
+      className="fixed inset-0 z-[130] flex items-center justify-center bg-black/65 px-5 backdrop-blur-sm"
       onClick={onCancel}
     >
       <div

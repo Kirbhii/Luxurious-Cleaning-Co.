@@ -1,45 +1,49 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ArrowRight, Star, CheckCircle2, ChevronDown, ChevronUp,
-  Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare, X,
+  Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare,
 } from 'lucide-react';
 import logoImg from '../imports/image-3.png';
 import { useCurrentUser } from '../store';
+import AuthPromptModal from '../components/AuthPromptModal';
 
 /* ─── image constants ─────────────────────────────────────────── */
 const IMG = {
   heroBg:       'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=1600&h=900&fit=crop&auto=format',
-  cleanerPortrait: 'https://images.unsplash.com/photo-1758272421995-e993f97fae22?w=600&h=900&fit=crop&crop=top&auto=format',
+  cleanerPortrait: 'https://images.pexels.com/photos/6195122/pexels-photo-6195122.jpeg?w=600&h=900&fit=crop&auto=compress',
   phoneTop:     'https://images.unsplash.com/photo-1628745277862-bc0b2d68c50c?w=400&h=220&fit=crop&auto=format',
   phoneBottom:  'https://images.unsplash.com/photo-1613545325278-f24b0cae1224?w=400&h=220&fit=crop&auto=format',
-  whyUs:        'https://images.unsplash.com/photo-1758272421751-963195322eaa?w=700&h=800&fit=crop&auto=format',
+  whyUs:        'https://images.pexels.com/photos/6197118/pexels-photo-6197118.jpeg?w=700&h=800&fit=crop&auto=compress',
   serviceBg:    'https://images.unsplash.com/photo-1779345169505-be7319f62b97?w=1200&h=600&fit=crop&auto=format',
   beforeClean:  'https://images.unsplash.com/photo-1597796681855-a8f9f83012f2?w=700&h=480&fit=crop&auto=format',
   afterClean:   'https://images.unsplash.com/photo-1628745277874-919d8f8ed03a?w=700&h=480&fit=crop&auto=format',
   commercial:   'https://images.unsplash.com/photo-1497366216548-37526070297c?w=700&h=500&fit=crop&auto=format',
-  gloves:       'https://images.unsplash.com/photo-1758272421751-963195322eaa?w=400&h=300&fit=crop&auto=format',
+  condo:        'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=400&h=300&fit=crop&auto=format',
   livingRoom:   'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=400&h=300&fit=crop&auto=format',
   kitchen:      'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=400&h=300&fit=crop&auto=format',
-  team:         'https://images.unsplash.com/photo-1614555199894-d1df9b97d301?w=800&h=500&fit=crop&auto=format',
-  mopBucket:    'https://images.unsplash.com/photo-1779345169505-be7319f62b97?w=600&h=400&fit=crop&auto=format',
+  team:         'https://images.pexels.com/photos/6197113/pexels-photo-6197113.jpeg?w=800&h=500&fit=crop&auto=compress',
+  moveIn:       'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=400&h=300&fit=crop&auto=format',
+  postConstruction: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&h=300&fit=crop&auto=format',
+  office:       'https://images.unsplash.com/photo-1497366754035-f200968a6e72?w=400&h=300&fit=crop&auto=format',
+  specialized:  'https://images.unsplash.com/photo-1584820927498-cfe5211fd8bf?w=400&h=300&fit=crop&auto=format',
 };
 
 const SERVICES = [
   { name: 'Residential Cleaning', img: IMG.livingRoom },
   { name: 'Deep Cleaning', img: IMG.kitchen },
-  { name: 'Move-In / Move-Out', img: IMG.afterClean },
-  { name: 'Post-Construction', img: IMG.mopBucket },
+  { name: 'Move-In / Move-Out', img: IMG.moveIn },
+  { name: 'Post-Construction', img: IMG.postConstruction },
   { name: 'Commercial Cleaning', img: IMG.commercial },
-  { name: 'Condo Cleaning', img: IMG.gloves },
-  { name: 'Office Cleaning', img: IMG.commercial },
-  { name: 'Specialized Cleaning', img: IMG.livingRoom },
+  { name: 'Condo Cleaning', img: IMG.condo },
+  { name: 'Office Cleaning', img: IMG.office },
+  { name: 'Specialized Cleaning', img: IMG.specialized },
 ];
 
 const TESTIMONIALS = [
-  { name: 'Catherine Liu', location: 'Yorkville, Toronto', rating: 5, quote: "Luxurious Cleaning Co. transformed my penthouse. The team is meticulous, discreet, and professional. I've never trusted anyone else with my home.", service: 'Gold Member — Bi-Weekly' },
-  { name: 'David Okonkwo', location: 'Forest Hill, Toronto', rating: 5, quote: "After renovation, I expected weeks of dust. The post-construction team had our home looking perfect within a single day. Absolutely remarkable.", service: 'Post-Construction' },
-  { name: 'Marina Petrov', location: 'Rosedale, Toronto', rating: 5, quote: "The real-time updates and photos through the portal give me complete peace of mind while I travel. Worth every penny.", service: 'Silver Member — Weekly' },
+  { name: 'Angel Reyes', location: 'San Juan City, Metro Manila', rating: 5, quote: "Luxurious Cleaning Co. transformed my penthouse. The team is meticulous, discreet, and professional. I've never trusted anyone else with my home.", service: 'Gold Member — Bi-Weekly' },
+  { name: 'Mark Villanueva', location: 'Makati City, Metro Manila', rating: 5, quote: "After renovation, I expected weeks of dust. The post-construction team had our home looking perfect within a single day. Absolutely remarkable.", service: 'Post-Construction' },
+  { name: 'Sofia Mendoza', location: 'Quezon City, Metro Manila', rating: 5, quote: "The real-time updates and photos through the portal give me complete peace of mind while I travel. Worth every penny.", service: 'Silver Member — Weekly' },
 ];
 
 const FAQS = [
@@ -82,7 +86,7 @@ function PhoneMockup() {
           <div className="px-3 py-2.5 flex-1 overflow-hidden">
             {/* Logo + name */}
             <div className="flex items-center gap-2 mb-1.5">
-              <img src={logoImg} alt="Luxurious Cleaning Co." className="w-8 h-8 object-contain rounded-full shrink-0" />
+              <img src={logoImg} alt="Luxurious Cleaning Co." className="w-10 h-10 object-contain rounded-full shrink-0" />
               <div>
                 <div className="text-[10px] font-bold text-gray-900 leading-tight">Luxurious Cleaning Co.</div>
                 <div className="text-[8px] text-gray-500">Cleaning service</div>
@@ -110,8 +114,8 @@ function PhoneMockup() {
             {/* Info rows */}
             <div className="space-y-1">
               {[
-                { icon: <MapPin size={7} />, text: 'Toronto, Ontario' },
-                { icon: <Phone size={7} />, text: '+1 416-555-LUXE' },
+                { icon: <MapPin size={7} />, text: 'San Juan City, Metro Manila' },
+                { icon: <Phone size={7} />, text: '0919 002 4136' },
                 { icon: <MessageSquare size={7} />, text: '"Always on time, always perfect."' },
               ].map((row, i) => (
                 <div key={i} className="flex items-start gap-1.5 text-[7px] text-gray-500">
@@ -184,8 +188,13 @@ function FeatureBlock({
 export default function Home() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [hasAnimated, setHasAnimated] = useState(false);
   const user = useCurrentUser();
-  const navigate = useNavigate();
+
+  // Trigger entrance animations on mount
+  useEffect(() => {
+    setHasAnimated(true);
+  }, []);
 
   function handleLandingInteraction(event: React.MouseEvent<HTMLDivElement>) {
     if (user) return;
@@ -198,53 +207,7 @@ export default function Home() {
 
   return (
     <div className="pt-16" onClickCapture={handleLandingInteraction}>
-      {authPromptOpen && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-5 backdrop-blur-sm"
-          onClick={() => setAuthPromptOpen(false)}
-          data-auth-exempt
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="auth-prompt-title"
-            className="relative w-full max-w-md rounded-2xl border border-gold-400/30 bg-navy-900 px-7 py-8 text-center shadow-2xl"
-            onClick={event => event.stopPropagation()}
-            data-auth-exempt
-          >
-            <button
-              type="button"
-              aria-label="Close sign in prompt"
-              onClick={() => setAuthPromptOpen(false)}
-              className="absolute right-4 top-4 text-cream-300 hover:text-cream-100"
-              data-auth-exempt
-            >
-              <X size={18} />
-            </button>
-            <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-5 h-10 w-auto object-contain" />
-            <h2 id="auth-prompt-title" className="font-serif text-2xl text-cream-100 mb-2">Welcome to Luxurious Cleaning Co.</h2>
-            <p className="text-sm leading-relaxed text-cream-300 mb-7">Please sign in to continue, or create an account to get started.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => navigate('/login')}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-4 py-3 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300"
-                data-auth-exempt
-              >
-                Log In 
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/login?mode=register')}
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-gold-400/40 px-4 py-3 text-sm font-semibold text-gold-400 transition-colors hover:bg-gold-400/10"
-                data-auth-exempt
-              >
-                Sign Up 
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AuthPromptModal open={authPromptOpen} onClose={() => setAuthPromptOpen(false)} />
 
       {/* ══ HERO ══════════════════════════════════════════════════ */}
       <section className="relative min-h-screen flex flex-col">
@@ -256,18 +219,19 @@ export default function Home() {
             alt="Professional cleaning team"
             className="w-full h-full object-cover object-center"
           />
-          {/* Warm dark overlay — matches the reference's desaturated, near-black treatment */}
-          <div className="absolute inset-0 bg-[#0E0C09]/78" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0E0C09]/90 via-[#0E0C09]/60 to-transparent" />
+          {/* Darker overlay to hide bottom portion */}
+          <div className="absolute inset-0 bg-[#0E0C09]/85" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#0E0C09]/95 via-[#0E0C09]/70 to-transparent" />
+          <div className="absolute bottom-0 inset-x-0 h-96 bg-gradient-to-t from-[#141210] via-[#141210]/95 to-transparent" />
         </div>
 
         {/* Main content grid */}
-        <div className="relative flex-1 max-w-4xl mx-auto w-full px-6 sm:px-8 lg:px-12 flex items-center justify-center py-16 pb-40">
+        <div className="relative flex-1 max-w-4xl mx-auto w-full px-6 sm:px-8 lg:px-12 flex items-center justify-center py-16 pb-32">
 
           {/* Centered headline and call-to-action */}
           <div className="text-center">
             {/* Eyebrow */}
-            <div className="inline-flex items-center gap-3 mb-5">
+            <div className={`inline-flex items-center gap-3 mb-5 transition-all duration-700 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
               <div className="w-8 h-[2px] bg-[#F5A623]" />
               <span className="text-[#F5A623] text-[10px] tracking-[0.3em] uppercase font-bold">
                 Premium · Trusted
@@ -277,25 +241,25 @@ export default function Home() {
 
             {/* The "A CLEAN YOU CAN TRUST" headline from reference */}
             <h1 className="font-display font-black uppercase leading-[0.9] mb-6">
-              <span className="block text-[clamp(3rem,6vw,5rem)] text-white tracking-tight">A Clean</span>
-              <span className="block text-[clamp(3rem,6vw,5rem)] text-white tracking-tight">You Can</span>
+              <span className={`block text-[clamp(3rem,6vw,5rem)] text-white tracking-tight transition-all duration-700 delay-100 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>A Clean</span>
+              <span className={`block text-[clamp(3rem,6vw,5rem)] text-white tracking-tight transition-all duration-700 delay-200 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>You Can</span>
               <span
-                className="block text-[clamp(3rem,6vw,5rem)] text-[#F5A623] tracking-tight"
+                className={`block text-[clamp(3rem,6vw,5rem)] text-[#F5A623] tracking-tight transition-all duration-700 delay-300 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}
                 style={{ textShadow: '0 0 60px rgba(245,166,35,0.4)' }}
               >
                 Trust.
               </span>
             </h1>
 
-            <p className="text-[#C5BEB5] text-sm leading-relaxed max-w-md mx-auto mb-8">
-              We offer a luxurious approach to deep cleaning your home or workplace — helping maintain a healthy, immaculate premises with real-time updates every step of the way.
+            <p className={`text-[#C5BEB5] text-sm leading-relaxed max-w-md mx-auto mb-8 transition-all duration-700 delay-500 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+             Luxurious Cleaning Co. is a cleaning service company that gained trust and strong pool of clients for its hotel-like cleaning services. We offer a luxurious approach in deep cleaning your home or workplace to help maintain a healthy and clean premises.
             </p>
 
             {/* CTA row */}
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className={`flex flex-wrap justify-center gap-3 transition-all duration-700 delay-700 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
               <Link
                 to="/book"
-                className="flex items-center gap-2 bg-[#F5A623] hover:bg-[#fbbf4a] text-[#1C1612] font-black text-xs uppercase tracking-widest px-8 py-3.5 rounded transition-all shadow-lg shadow-[#F5A623]/25"
+                className="flex items-center gap-2 bg-[#F5A623] hover:bg-[#fbbf4a] text-[#1C1612] font-black text-xs uppercase tracking-widest px-8 py-3.5 rounded transition-all shadow-lg shadow-[#F5A623]/25 btn-hover-lift"
               >
                 Book a Service <ArrowRight size={14} />
               </Link>
@@ -308,7 +272,7 @@ export default function Home() {
             </div>
 
             {/* Trust badges */}
-            <div className="flex items-center justify-center gap-5 mt-8 mb-10">
+            <div className={`flex items-center justify-center gap-5 mt-8 mb-10 transition-all duration-700 delay-1000 ${hasAnimated ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
               {[
                 { v: '2,400+', l: 'Cleanings' },
                 { v: '98%', l: 'Satisfaction' },
@@ -347,7 +311,7 @@ export default function Home() {
       </section>
 
       {/* ══ SERVICES ══════════════════════════════════════════════ */}
-      <section className="py-24 bg-[#141210]">
+      <section className="relative z-10 pt-12 pb-24 bg-[#141210]">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-4">
             <div>
@@ -369,21 +333,34 @@ export default function Home() {
               <Link
                 key={service.name}
                 to="/book"
-                className="group relative overflow-hidden rounded-xl aspect-[4/3] block"
+                className="group relative overflow-hidden rounded-xl block h-[240px]"
+                style={{
+                  backgroundImage: `url(${service.img})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }}
               >
-                <img
-                  src={service.img}
-                  alt={service.name}
-                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 brightness-50 group-hover:brightness-40"
+                {/* Dark overlay */}
+                <div className="absolute inset-0 bg-black/50 group-hover:bg-black/60 transition-colors duration-300" />
+                
+                {/* Zoom effect layer */}
+                <div 
+                  className="absolute inset-0 transition-transform duration-500 group-hover:scale-110"
+                  style={{
+                    backgroundImage: `url(${service.img})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                  }}
                 />
+                
                 {/* Amber bottom bar on hover */}
-                <div className="absolute inset-x-0 bottom-0 h-1 bg-[#F5A623] scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left" />
-                <div className="absolute inset-0 flex flex-col justify-end p-4">
+                <div className="absolute inset-x-0 bottom-0 h-1 bg-[#F5A623] scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left z-20" />
+                <div className="absolute inset-0 flex flex-col justify-end p-4 z-10">
                   <h3 className="font-display font-black text-xs uppercase tracking-wide text-white leading-tight group-hover:text-[#F5A623] transition-colors">
                     {service.name}
                   </h3>
                 </div>
-                <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                   <div className="w-6 h-6 rounded-full bg-[#F5A623] flex items-center justify-center">
                     <ArrowRight size={11} className="text-[#1C1612]" />
                   </div>
@@ -577,14 +554,13 @@ export default function Home() {
       </section>
 
       {/* ══ TEAM / CTA BANNER ═════════════════════════════════════ */}
-      <section className="relative py-0 overflow-hidden">
-        <img src={IMG.team} alt="Our cleaning team" className="w-full h-64 object-cover brightness-30" />
+      <section className="relative py-0 overflow-hidden h-36 bg-gradient-to-r from-[#F5A623] to-[#D4910F]">
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center px-6">
-            <h2 className="font-display font-black text-4xl md:text-5xl uppercase text-white mb-2">
-              45+ Certified <span className="text-[#F5A623]">Professionals</span>
+            <h2 className="font-display font-black text-3xl md:text-4xl uppercase text-[#1C1612] mb-1">
+              45+ Certified <span className="text-white">Professionals</span>
             </h2>
-            <p className="text-[#C5BEB5] text-sm">Ready to transform your space — every single day.</p>
+            <p className="text-[#1C1612] text-xs font-semibold">Ready to transform your space — every single day.</p>
           </div>
         </div>
       </section>
@@ -679,7 +655,7 @@ export default function Home() {
               Book a Service <ArrowRight size={14} />
             </Link>
             <a
-              href="tel:+14165550001"
+              href="tel:09190024136"
               className="flex items-center gap-2 border-2 border-[#1C1612]/30 hover:border-[#1C1612] text-[#1C1612] text-xs font-black uppercase tracking-widest px-8 py-4 rounded-lg transition-colors"
             >
               <Phone size={13} />Call Us

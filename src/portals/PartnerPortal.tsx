@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CheckCircle2, ArrowRight, PlusCircle, Briefcase, Bell, LogOut } from 'lucide-react';
-import { useStore, useCurrentUser, genId } from '../store';
+import { CheckCircle2, ArrowRight, ArrowLeft, PlusCircle, Briefcase, Bell, LogOut } from 'lucide-react';
+import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { PartnerProject } from '../store';
+import ConfirmModal from '../components/ConfirmModal';
+import { insertPartnerProject } from '../lib/supabase';
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
   lead_submitted: 'Lead Submitted',
@@ -35,9 +37,18 @@ export default function PartnerPortal() {
   const [tab, setTab] = useState<'overview' | 'projects' | 'submit' | 'notifications'>('overview');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const myApp = state.partnerApplications.find(p => p.userId === user.id);
-  const myProjects = myApp ? state.partnerProjects.filter(p => p.partnerId === myApp.id) : [];
+  // Projects may be keyed by application id (local) or company id (database)
+  const myProjects = myApp
+    ? state.partnerProjects.filter(p => p.partnerId === myApp.id || (myApp.companyId && p.partnerId === myApp.companyId))
+    : [];
   const myNotifications = state.notifications.filter(n => n.userId === user.id);
   const unread = myNotifications.filter(n => !n.read).length;
 
@@ -61,30 +72,54 @@ export default function PartnerPortal() {
     navigate('/login');
   }
 
+  function requestLogout() {
+    setConfirmation({
+      title: 'Log out?',
+      message: 'You will be signed out of your account and redirected to the login page.',
+      confirmLabel: 'Log Out',
+      onConfirm: () => { handleLogout(); setConfirmation(null); },
+    });
+  }
+
   function handleSubmitProject(e: React.FormEvent) {
     e.preventDefault();
     if (!myApp) return;
     setSubmitting(true);
-    setTimeout(() => {
-      const project: PartnerProject = {
+    setTimeout(async () => {
+      // Persist to the database when the application owns a company record
+      // (satisfies the partner_id foreign key). Otherwise stays local-only.
+      const companyId = myApp.companyId ?? null;
+      let project: PartnerProject = {
         id: genId('pp'),
-        partnerId: myApp.id,
+        partnerId: companyId ?? myApp.id,
         ...form,
         status: 'lead_submitted',
         createdAt: new Date().toISOString(),
       };
+      if (companyId) {
+        const { data } = await insertPartnerProject({
+          partner_id: companyId,
+          name: form.name,
+          address: form.address,
+          size: form.size,
+          units: form.units,
+          turnover_date: form.turnoverDate || null,
+          preferred_date: form.preferredDate || null,
+          requirements: form.requirements,
+          additional_info: form.additionalInfo,
+        });
+        if (data) {
+          project = data;
+        } else {
+          console.error('[Partner] Project database insert failed, keeping local copy.');
+        }
+      }
       dispatch({ type: 'ADD_PARTNER_PROJECT', payload: project });
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id: genId('n'),
-          userId: user.id,
-          title: 'Project Submitted',
-          message: `Your project "${form.name}" has been submitted and is under review.`,
-          read: false,
-          link: '/portal/partner',
-          createdAt: new Date().toISOString(),
-        },
+      await saveNotification(dispatch, {
+        userId: user.id,
+        title: 'Project Submitted',
+        message: `Your project "${form.name}" has been submitted and is under review.`,
+        link: '/portal/partner',
       });
       setSubmitting(false);
       setSubmitted(true);
@@ -110,6 +145,7 @@ export default function PartnerPortal() {
 
   return (
     <div className="min-h-screen bg-navy-950">
+      {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-6xl mx-auto px-6 py-6">
           <div className="text-xs text-gold-400 tracking-[0.2em] uppercase font-medium mb-1">Partner Portal</div>
@@ -128,6 +164,10 @@ export default function PartnerPortal() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+                <ArrowLeft size={14} />
+                Back to Home
+              </Link>
               {myApp.status === 'approved' && (
                 <button
                   onClick={() => setTab('submit')}
@@ -137,7 +177,7 @@ export default function PartnerPortal() {
                 </button>
               )}
               <button
-                onClick={handleLogout}
+                onClick={requestLogout}
                 className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
               >
                 <LogOut size={14} />

@@ -1,6 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useLayoutEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { AppProvider, useCurrentUser, useAuthReady } from './store';
 import { signOut } from './lib/supabase';
+import { ToastProvider } from './components/ToastContainer';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import Home from './pages/Home';
@@ -11,11 +13,32 @@ import Partnerships from './pages/Partnerships';
 import Training from './pages/Training';
 import Contact from './pages/Contact';
 import Booking from './pages/Booking';
+import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
 import CustomerPortal from './portals/CustomerPortal';
 import CleanerPortal from './portals/CleanerPortal';
 import PartnerPortal from './portals/PartnerPortal';
 import AdminDashboard from './portals/AdminDashboard';
+
+// ─── Scroll restoration ───────────────────────────────────────────────────────
+// Resets the viewport to the top on every route change so pages like
+// /membership always start at the top instead of inheriting the previous
+// page's scroll position. Runs in useLayoutEffect (before paint) and resets
+// both window and documentElement, since global CSS pins overflow on <html>.
+
+function ScrollToTop() {
+  const { pathname, search } = useLocation();
+
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [pathname, search]);
+
+  return null;
+}
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 // Waits for the Supabase session check to finish before rendering.
@@ -65,7 +88,10 @@ function AppRoutes() {
       <Route path="/training"    element={<PublicLayout><Training /></PublicLayout>} />
       <Route path="/contact"     element={<PublicLayout><Contact /></PublicLayout>} />
       <Route path="/book"        element={<PublicLayout><Booking /></PublicLayout>} />
+      <Route path="/privacy"     element={<PublicLayout><Privacy /></PublicLayout>} />
+      <Route path="/terms"       element={<PublicLayout><Terms /></PublicLayout>} />
       <Route path="/login"       element={<LoginRoute />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       {/* Protected portals — each locked to its role */}
       <Route path="/portal/customer" element={
@@ -91,6 +117,7 @@ function AppRoutes() {
 function LoginRoute() {
   const user = useCurrentUser();
   const authReady = useAuthReady();
+  const [searchParams] = useSearchParams();
 
   if (!authReady) {
     return (
@@ -101,11 +128,23 @@ function LoginRoute() {
   }
 
   if (user) {
+    const redirect = searchParams.get('redirect');
+    const safeRedirect =
+      redirect && redirect.startsWith('/') &&
+      !redirect.startsWith('/login') &&
+      !redirect.startsWith('/reset-password') &&
+      !redirect.startsWith('/portal')
+        ? redirect
+        : null;
+    // Customers honor ?redirect= (e.g. /book from the auth prompt); staff go to portal
+    if (safeRedirect && user.role === 'customer') {
+      return <Navigate to={safeRedirect} replace />;
+    }
     const portal =
       user.role === 'admin'   ? '/portal/admin'
       : user.role === 'cleaner' ? '/portal/cleaner'
       : user.role === 'partner' ? '/portal/partner'
-      : '/portal/customer';
+      : '/'; // Customers go to home page
     return <Navigate to={portal} replace />;
   }
 
@@ -117,9 +156,12 @@ function LoginRoute() {
 export default function App() {
   return (
     <AppProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <ScrollToTop />
+          <AppRoutes />
+        </BrowserRouter>
+      </ToastProvider>
     </AppProvider>
   );
 }
