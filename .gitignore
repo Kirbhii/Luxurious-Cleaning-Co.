@@ -3,6 +3,11 @@ dist/
 build/
 .cache/
 .env*
+
+# This project uses npm (package-lock.json). Do not add a pnpm lockfile —
+# Vercel auto-detects pnpm-lock.yaml and switches to `pnpm install`,
+# which then fails the build.
+pnpm-lock.yaml
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
