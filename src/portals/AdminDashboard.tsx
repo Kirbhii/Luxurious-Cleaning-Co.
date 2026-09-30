@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, profileToUser, saveNotification } from '../store';
 import { useToast } from '../components/ToastContainer';
-import type { BookingStatus, PartnerApplication, TrainingApplication, MembershipTier } from '../store';
+import type { BookingStatus, PartnerApplication, TrainingApplication, MembershipTier, User } from '../store';
 import {
   signOut,
   fetchAllProfiles,
@@ -19,6 +19,8 @@ import {
   createPartnerCompany,
   linkPartnerApplicationCompany,
   setProfileCompany,
+  setUserRole,
+  type AssignableRole,
 } from '../lib/supabase';
 import ConfirmModal from '../components/ConfirmModal';
 import { PRIORITY_LABELS, PRIORITY_COLORS, priorityRank } from '../lib/membership';
@@ -511,6 +513,20 @@ export default function AdminDashboard() {
     }
     dispatch({ type: 'UPDATE_PARTNER_APP', payload: updated });
     if (status === 'approved') {
+      // Grant the partner role. Without this the applicant stays role='customer'
+      // and <ProtectedRoute role="partner"> bounces them straight back to "/", so
+      // "approved" was a dead end — they could never actually reach the portal.
+      if (app.userId && isUuid(app.userId)) {
+        void setUserRole(app.userId, 'partner').then(({ error }) => {
+          if (error) {
+            console.error('[Admin] Partner role grant failed:', error.message);
+            toast.error(
+              'Role Update Failed',
+              `${app.contactPerson} was approved, but the partner role could not be granted. Please retry from the Users tab.`
+            );
+          }
+        });
+      }
       // Provision the company record so the partner can submit projects
       void provisionPartnerCompany(updated).then(companyId => {
         if (companyId) {
@@ -537,6 +553,35 @@ export default function AdminDashboard() {
       message: `${app.companyName}'s partnership application will be updated.`,
       confirmLabel: status === 'rejected' ? 'Reject' : 'Update',
       onConfirm: () => { updatePartnerApp(app, status); setConfirmation(null); },
+    });
+  }
+
+  /** Admin-only role change — this is how a trainee gets absorbed, or any user
+   *  is promoted. profiles.role is frozen against client writes (migration 007),
+   *  so the write goes through admin_set_user_role() from migration 008, which
+   *  refuses to grant 'admin' and refuses to change the caller's own role.
+   */
+  function requestUserRoleChange(user: User, role: AssignableRole) {
+    if (user.role === role) return;
+    // Sample/seed rows in the store carry ids like 'u1'; the RPC needs a real UUID.
+    if (!isUuid(user.id)) {
+      toast.error('Cannot change role', 'This is a local sample record, not a database account.');
+      return;
+    }
+    setConfirmation({
+      title: 'Change this user\'s role?',
+      message: `${user.name} will become a ${role}. On their next sign-in they will land in the ${role} portal.`,
+      confirmLabel: 'Change role',
+      onConfirm: async () => {
+        setConfirmation(null);
+        const { error } = await setUserRole(user.id, role);
+        if (error) {
+          toast.error('Role Update Failed', error.message);
+          return;
+        }
+        dispatch({ type: 'UPDATE_USER_ROLE', payload: { userId: user.id, role } });
+        toast.success('Role Updated', `${user.name} is now a ${role}.`);
+      },
     });
   }
 
@@ -875,12 +920,24 @@ export default function AdminDashboard() {
                         <td className="px-5 py-3 text-cream-100 font-medium">{u.name}</td>
                         <td className="px-5 py-3 text-cream-300">{u.email}</td>
                         <td className="px-5 py-3">
-                          <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
-                            u.role === 'admin' ? 'bg-red-400/10 text-red-400'
-                            : u.role === 'cleaner' ? 'bg-sky-400/10 text-sky-400'
-                            : u.role === 'partner' ? 'bg-violet-400/10 text-violet-400'
-                            : 'bg-emerald-400/10 text-emerald-400'
-                          }`}>{u.role}</span>
+                          {u.role === 'admin' ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full capitalize bg-red-400/10 text-red-400">admin</span>
+                          ) : (
+                            <select
+                              value={u.role}
+                              onChange={e => requestUserRoleChange(u, e.target.value as AssignableRole)}
+                              aria-label={`Role for ${u.name}`}
+                              className={`text-xs px-2 py-1 rounded-lg border bg-navy-700 capitalize cursor-pointer focus:outline-none focus:border-gold-400/50 ${
+                                u.role === 'cleaner' ? 'border-sky-400/30 text-sky-400'
+                                : u.role === 'partner' ? 'border-violet-400/30 text-violet-400'
+                                : 'border-emerald-400/30 text-emerald-400'
+                              }`}
+                            >
+                              <option value="customer">customer</option>
+                              <option value="cleaner">cleaner</option>
+                              <option value="partner">partner</option>
+                            </select>
+                          )}
                         </td>
                         <td className="px-5 py-3 text-cream-300">{u.phone || '—'}</td>
                         <td className="px-5 py-3">
@@ -895,6 +952,10 @@ export default function AdminDashboard() {
                 </tbody>
               </table>
             </div>
+            <p className="mt-3 text-xs text-cream-300/60">
+              Change a role to absorb a trainee or promote a user — it takes effect on their next sign-in.
+              Admin accounts are managed in the Supabase dashboard.
+            </p>
           </div>
         )}
 

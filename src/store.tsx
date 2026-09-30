@@ -532,6 +532,7 @@ type Action =
   | { type: 'SUBMIT_CONTACT'; payload: ContactMessage }
   | { type: 'UPDATE_USER_PROFILE'; payload: { userId: string; name: string; email: string; phone: string } }
   | { type: 'UPDATE_USER_MEMBERSHIP'; payload: { userId: string; tier: MembershipTier | null; status: 'active' | 'pending' | 'none' } }
+  | { type: 'UPDATE_USER_ROLE'; payload: { userId: string; role: UserRole } }
   | { type: 'SET_TRAINING_PROGRAMS'; payload: TrainingProgram[] }
   | { type: 'SET_TRAINING_APPLICATIONS'; payload: TrainingApplication[] }
   | { type: 'SET_PARTNER_APPLICATIONS'; payload: PartnerApplication[] }
@@ -620,6 +621,16 @@ function reducer(state: AppState, action: Action): AppState {
           : u),
         currentUser: state.currentUser?.id === action.payload.userId
           ? { ...state.currentUser, name: action.payload.name, email: action.payload.email, phone: action.payload.phone }
+          : state.currentUser,
+      };
+    case 'UPDATE_USER_ROLE':
+      return {
+        ...state,
+        users: state.users.map(u => u.id === action.payload.userId
+          ? { ...u, role: action.payload.role }
+          : u),
+        currentUser: state.currentUser?.id === action.payload.userId
+          ? { ...state.currentUser, role: action.payload.role }
           : state.currentUser,
       };
     case 'UPDATE_USER_MEMBERSHIP':

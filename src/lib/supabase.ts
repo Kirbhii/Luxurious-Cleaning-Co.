@@ -1153,6 +1153,38 @@ export async function setProfileCompany(
   }
 }
 
+/** The roles an admin may assign from the dashboard.
+ *
+ *  'admin' is deliberately excluded — admin_set_user_role() (migration 008)
+ *  refuses to grant it, so minting another admin stays a deliberate act in the
+ *  Supabase dashboard rather than a UI action.
+ */
+export type AssignableRole = 'customer' | 'cleaner' | 'partner';
+
+/** Change another user's role. Admin-only, enforced server-side.
+ *
+ *  profiles.role is frozen against client writes (migration 007 column grants
+ *  plus the enforce_profile_column_privileges trigger), so this write has to go
+ *  through admin_set_user_role() from migration 008. That function refuses to
+ *  grant 'admin' and refuses to change the caller's own role.
+ */
+export async function setUserRole(
+  userId: string,
+  role: AssignableRole
+): Promise<{ error: { message: string } | null }> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.rpc as any)('admin_set_user_role', {
+      p_user_id: userId,
+      p_role: role,
+    });
+    if (error) return { error: { message: error.message } };
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
 export function partnerProjectFromRow(row: PartnerProjectRow): AppPartnerProject {
   return {
     id: row.id,
