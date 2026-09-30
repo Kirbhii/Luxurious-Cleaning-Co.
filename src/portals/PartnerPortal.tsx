@@ -4,6 +4,7 @@ import { CheckCircle2, ArrowRight, ArrowLeft, PlusCircle, Briefcase, Bell, LogOu
 import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { PartnerProject } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import PinSettings from '../components/PinSettings';
 import { insertPartnerProject } from '../lib/supabase';
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
@@ -34,7 +35,7 @@ export default function PartnerPortal() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'overview' | 'projects' | 'submit' | 'notifications'>('overview');
+  const [tab, setTab] = useState<'overview' | 'projects' | 'submit' | 'notifications' | 'security'>('overview');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [confirmation, setConfirmation] = useState<{
@@ -205,6 +206,7 @@ export default function PartnerPortal() {
               { key: 'projects', label: 'Projects', count: myProjects.length },
               { key: 'submit', label: 'Submit Project' },
               { key: 'notifications', label: 'Notifications', count: unread },
+              { key: 'security', label: 'Security' },
             ].map(t => (
               <button
                 key={t.key}
@@ -392,6 +394,8 @@ export default function PartnerPortal() {
             ))}
           </div>
         )}
+
+        {tab === 'security' && <PinSettings />}
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, ArrowLeft, LogO
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import PinSettings from '../components/PinSettings';
 import { updateBookingRow } from '../lib/supabase';
 
 const SAMPLE_PHOTOS = [
@@ -282,7 +283,7 @@ export default function CleanerPortal() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'active' | 'completed'>('active');
+  const [tab, setTab] = useState<'active' | 'completed' | 'security'>('active');
   const [confirmation, setConfirmation] = useState<{
     title: string;
     message: string;
@@ -350,7 +351,7 @@ export default function CleanerPortal() {
             ))}
           </div>
           <div className="flex gap-1 border-b border-gold-400/10">
-            {[{ key: 'active', label: 'Active Jobs' }, { key: 'completed', label: 'Completed' }].map(t => (
+            {[{ key: 'active', label: 'Active Jobs' }, { key: 'completed', label: 'Completed' }, { key: 'security', label: 'Security' }].map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key as typeof tab)}
@@ -365,7 +366,9 @@ export default function CleanerPortal() {
 
       <div className="max-w-5xl mx-auto px-6 py-8 min-h-[36rem]">
         <div className="space-y-5">
-          {tab === 'active' ? (
+          {tab === 'security' ? (
+            <PinSettings />
+          ) : tab === 'active' ? (
             active.length === 0 ? (
               <div className="text-center py-16 text-cream-300">No active jobs assigned.</div>
             ) : (

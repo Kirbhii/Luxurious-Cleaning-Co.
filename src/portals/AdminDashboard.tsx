@@ -28,6 +28,7 @@ import BookingReviewModal from '../components/BookingReviewModal';
 import ApplicationReviewModal from '../components/ApplicationReviewModal';
 import CertificateModal from '../components/CertificateModal';
 import ResumeLink from '../components/ResumeLink';
+import PinSettings from '../components/PinSettings';
 
 const BOOKING_STATUSES: BookingStatus[] = [
   'pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'completed', 'cancelled', 'awaiting_quote',
@@ -42,7 +43,7 @@ export default function AdminDashboard() {
   const user = useCurrentUser()!;
   const navigate = useNavigate();
   const toast = useToast();
-  const [tab, setTab] = useState<'overview' | 'bookings' | 'users' | 'partners' | 'training' | 'messages'>('overview');
+  const [tab, setTab] = useState<'overview' | 'bookings' | 'users' | 'partners' | 'training' | 'messages' | 'security'>('overview');
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [userRoleFilter, setUserRoleFilter] = useState<(typeof USER_ROLE_FILTERS)[number]>('all');
   const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
@@ -687,6 +688,7 @@ export default function AdminDashboard() {
               { key: 'partners', label: 'Partners', count: state.partnerApplications.length },
               { key: 'training', label: 'Training', count: trainingApps },
               { key: 'messages', label: 'Messages', count: unreadMessages },
+              { key: 'security', label: 'Security' },
             ].map(t => (
               <button
                 key={t.key}
@@ -1231,6 +1233,8 @@ export default function AdminDashboard() {
             )}
           </div>
         )}
+
+        {tab === 'security' && <PinSettings />}
       </div>
     </div>
   );

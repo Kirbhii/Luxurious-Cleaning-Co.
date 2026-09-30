@@ -545,9 +545,42 @@ export async function updateApplicationStatus(
 
 // ─── PIN Helpers (Staff: Cleaner, Admin, Partner) ────────────────────────────
 // PINs are hashed and verified on the server (bcrypt via pgcrypto) by the
-// SECURITY DEFINER functions in migration 007. The client never sees the hash
-// and never computes one — a 4-6 digit PIN hashed client-side with bare SHA-256
-// is trivially brute-forced, and `pin_hash` is no longer readable by clients.
+// SECURITY DEFINER functions in migrations 007 and 010. The client never sees
+// the hash and never computes one — a 4-6 digit PIN hashed client-side with
+// bare SHA-256 is trivially brute-forced, and `pin_hash` is not readable by
+// clients at all.
+//
+// Setting a PIN always requires proof the session alone does not carry:
+//   · a PIN already exists  -> the CURRENT PIN
+//   · no PIN yet            -> the ACCOUNT PASSWORD (verified server-side
+//                              against auth.users, not in the browser)
+// Both are enforced inside set_user_pin(), so calling the RPC directly cannot
+// skip them.
+
+export type PinLockStatus = {
+  /** Whether the account has a PIN at all. */
+  hasPin: boolean;
+  /** While true, even the CORRECT PIN is rejected. */
+  isLocked: boolean;
+  /** Seconds until the lockout lifts. 0 when not locked. */
+  secondsRemaining: number;
+  /** Attempts left before the lockout engages. */
+  attemptsLeft: number;
+};
+
+/**
+ * Detect a PostgREST "function not found" error, which is what you get when
+ * migration 010 has not been applied yet. Callers use this to show an honest
+ * "not available yet" notice instead of a scary raw error.
+ */
+export function isMissingRpc(message: string | undefined): boolean {
+  if (!message) return false;
+  return (
+    message.includes('Could not find the function') ||
+    message.includes('PGRST202') ||
+    message.includes('does not exist')
+  );
+}
 
 /**
  * Check if the current user has a PIN set.
@@ -564,45 +597,119 @@ export async function hasPin(): Promise<boolean> {
 }
 
 /**
- * Create or update the current user's PIN.
- * @param pin - 4-6 digit PIN
+ * Read the current user's PIN state without submitting one.
+ *
+ * Without this, the only way to discover "you are locked out" would be to
+ * submit a PIN — which burns one of the five attempts. So the UI reads status
+ * first and shows a countdown instead of inviting a doomed attempt.
  */
-export async function setPin(pin: string): Promise<{ error: { message: string } | null }> {
+export async function pinLockStatus(): Promise<{
+  status: PinLockStatus | null;
+  error: { message: string } | null;
+}> {
+  const fallback: PinLockStatus = {
+    hasPin: false,
+    isLocked: false,
+    secondsRemaining: 0,
+    attemptsLeft: 5,
+  };
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc as any)('pin_lock_status');
+
+    if (error) {
+      console.error('[Supabase] pinLockStatus error:', error.message);
+      return { status: null, error: { message: error.message } };
+    }
+
+    // A set-returning function comes back as an array over PostgREST.
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return { status: fallback, error: null };
+
+    return {
+      status: {
+        hasPin: Boolean(row.has_pin),
+        isLocked: Boolean(row.is_locked),
+        secondsRemaining: Number(row.seconds_remaining ?? 0),
+        attemptsLeft: Number(row.attempts_left ?? 0),
+      },
+      error: null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[Supabase] pinLockStatus threw:', message);
+    return { status: null, error: { message } };
+  }
+}
+
+/**
+ * Create or change the current user's PIN.
+ *
+ * @param newPin      - 4-6 digit PIN
+ * @param currentPin  - required when a PIN already exists
+ * @param password    - required when setting the FIRST PIN
+ */
+export async function setPin(
+  newPin: string,
+  opts: { currentPin?: string; password?: string } = {}
+): Promise<{ error: { message: string } | null }> {
   // Validate locally first for a fast, friendly error.
-  if (!/^\d{4,6}$/.test(pin)) {
+  if (!/^\d{4,6}$/.test(newPin)) {
     return { error: { message: 'PIN must be 4-6 digits' } };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase.rpc as any)('set_user_pin', { p_pin: pin });
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.rpc as any)('set_user_pin', {
+      p_new_pin: newPin,
+      p_current_pin: opts.currentPin || null,
+      p_password: opts.password || null,
+    });
 
-  if (error) {
-    console.error('[Supabase] setPin error:', error.message);
-    return { error: { message: error.message } };
+    if (error) {
+      console.error('[Supabase] setPin error:', error.message);
+      return { error: { message: error.message } };
+    }
+    return { error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[Supabase] setPin threw:', message);
+    return { error: { message } };
   }
-  return { error: null };
 }
 
 /**
  * Verify the current user's PIN.
  * The comparison happens in the database; the client only receives a boolean.
+ *
+ * NOTE: while a lockout is active this returns `valid: false` even for the
+ * correct PIN — that is deliberate (see migration 010). Callers must read
+ * pinLockStatus() to tell "wrong PIN" apart from "locked out", otherwise a
+ * locked-out user is told their PIN is incorrect when it was not.
  */
 export async function verifyUserPin(
   pin: string
 ): Promise<{ valid: boolean; error?: { message: string } }> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase.rpc as any)('verify_user_pin', { p_pin: pin });
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc as any)('verify_user_pin', { p_pin: pin });
 
-  if (error) {
-    console.error('[Supabase] verifyUserPin error:', error.message);
-    return { valid: false, error: { message: error.message } };
+    if (error) {
+      console.error('[Supabase] verifyUserPin error:', error.message);
+      return { valid: false, error: { message: error.message } };
+    }
+
+    if (data !== true) {
+      return { valid: false, error: { message: 'Incorrect PIN' } };
+    }
+
+    return { valid: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[Supabase] verifyUserPin threw:', message);
+    return { valid: false, error: { message } };
   }
-
-  if (data !== true) {
-    return { valid: false, error: { message: 'Incorrect PIN' } };
-  }
-
-  return { valid: true };
 }
 
 // ─── Membership Helpers ──────────────────────────────────────────────────────
