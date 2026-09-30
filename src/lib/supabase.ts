@@ -934,10 +934,19 @@ export async function updateBookingRow(
   fields: Partial<{ status: BookingStatus; cleaner_id: string | null; cleaner_notes: string; before_photos: string[]; progress_photos: string[]; after_photos: string[] }>
 ): Promise<{ error: { message: string } | null }> {
   try {
-    const { error } = await (supabase.from('bookings') as any)
+    // `.select('id')` makes PostgREST emit a RETURNING clause. Without it a write
+    // that matched zero rows comes back as `error: null` — PostgREST only reports
+    // success, never an affected-row count. A row is matched by the WHERE clause
+    // AND the RLS policy, so an RLS-blocked update would otherwise look like it
+    // worked while the database stayed untouched.
+    const { data, error } = await (supabase.from('bookings') as any)
       .update(fields)
-      .eq('id', id);
+      .eq('id', id)
+      .select('id');
     if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) {
+      return { error: { message: `Booking ${id} was not updated — it may have been removed, or you may not have permission to change it.` } };
+    }
     return { error: null };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : 'Network error' } };
@@ -946,8 +955,13 @@ export async function updateBookingRow(
 
 export async function deleteBookingRow(id: string): Promise<{ error: { message: string } | null }> {
   try {
-    const { error } = await supabase.from('bookings').delete().eq('id', id);
+    // See updateBookingRow — the RETURNING clause is what makes a zero-row delete
+    // observable instead of a silent no-op reported as success.
+    const { data, error } = await supabase.from('bookings').delete().eq('id', id).select('id');
     if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) {
+      return { error: { message: `Booking ${id} was not deleted — it may have been removed already, or you may not have permission to delete it.` } };
+    }
     return { error: null };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : 'Network error' } };

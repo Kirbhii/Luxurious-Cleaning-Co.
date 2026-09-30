@@ -231,10 +231,17 @@ export default function CustomerPortal() {
     });
   }
 
-  function deleteBooking(bookingId: string) {
-    deleteBookingRow(bookingId).then(({ error }) => {
-      if (error) console.error('[Customer] Booking delete DB sync failed:', error.message);
-    });
+  async function deleteBooking(bookingId: string) {
+    // Persist first, then mirror locally. Only drop the booking from the UI once
+    // the database has actually deleted it — otherwise a blocked delete (RLS)
+    // left the row in place while the card vanished and a success toast fired,
+    // and the booking reappeared on the next reload.
+    const { error } = await deleteBookingRow(bookingId);
+    if (error) {
+      console.error('[Customer] Booking delete DB sync failed:', error.message);
+      toast.error('Could Not Delete Booking', error.message);
+      return;
+    }
     dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
     toast.success('Booking Deleted', 'The booking has been removed from your account.');
   }
