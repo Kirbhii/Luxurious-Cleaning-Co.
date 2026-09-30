@@ -23,6 +23,7 @@ import {
   type AssignableRole,
 } from '../lib/supabase';
 import ConfirmModal from '../components/ConfirmModal';
+import PinPromptModal from '../components/PinPromptModal';
 import { PRIORITY_LABELS, PRIORITY_COLORS, priorityRank } from '../lib/membership';
 import BookingReviewModal from '../components/BookingReviewModal';
 import ApplicationReviewModal from '../components/ApplicationReviewModal';
@@ -49,6 +50,17 @@ export default function AdminDashboard() {
   const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
   const [trainingStatusFilter, setTrainingStatusFilter] = useState<(typeof TRAINING_STATUS_FILTERS)[number]>('all');
   const [confirmation, setConfirmation] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
+  // Same shape as `confirmation`, but the action only runs after the admin
+  // re-enters their PIN. Reserved for the actions that are irreversible or that
+  // hand out a role — see PIN_PLAN.md §2. Everything else stays on ConfirmModal,
+  // deliberately: gating high-frequency reversible actions teaches staff to
+  // share the PIN, which is worse than not gating at all.
+  const [pinGate, setPinGate] = useState<{
     title: string;
     message: string;
     confirmLabel: string;
@@ -266,11 +278,12 @@ export default function AdminDashboard() {
 
   function requestDeleteTrainingApp(appId: string) {
     const app = state.trainingApplications.find(a => a.id === appId);
-    setConfirmation({
+    // PIN-gated: irreversible. Removing a trainee's record cannot be undone.
+    setPinGate({
       title: 'Remove trainee?',
       message: `${app?.name || 'This trainee'}'s training record will be permanently removed. This action cannot be undone.`,
       confirmLabel: 'Remove',
-      onConfirm: () => { deleteTrainingApp(appId); setConfirmation(null); },
+      onConfirm: () => { deleteTrainingApp(appId); setPinGate(null); },
     });
   }
 
@@ -357,11 +370,12 @@ export default function AdminDashboard() {
   }
 
   function requestDeleteBooking(bookingId: string) {
-    setConfirmation({
+    // PIN-gated: irreversible, and ON DELETE CASCADE takes the whole timeline.
+    setPinGate({
       title: 'Delete booking?',
       message: 'Are you sure you want to delete this booking? This action cannot be undone.',
       confirmLabel: 'Delete',
-      onConfirm: () => { deleteBooking(bookingId); setConfirmation(null); },
+      onConfirm: () => { deleteBooking(bookingId); setPinGate(null); },
     });
   }
 
@@ -549,12 +563,21 @@ export default function AdminDashboard() {
 
   function requestPartnerUpdate(app: PartnerApplication, status: PartnerApplication['status']) {
     const action = status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : 'move under review';
-    setConfirmation({
+    const dismiss = () => { setConfirmation(null); setPinGate(null); };
+    const request = {
       title: `${action.charAt(0).toUpperCase() + action.slice(1)} application?`,
-      message: `${app.companyName}'s partnership application will be updated.`,
+      message: status === 'approved'
+        ? `Approving "${app.companyName}" grants the partner role and creates a company record they can submit projects from.`
+        : `${app.companyName}'s partnership application will be updated.`,
       confirmLabel: status === 'rejected' ? 'Reject' : 'Update',
-      onConfirm: () => { updatePartnerApp(app, status); setConfirmation(null); },
-    });
+      onConfirm: () => { updatePartnerApp(app, status); dismiss(); },
+    };
+
+    // Only APPROVAL is PIN-gated — it is the step that hands out a role and
+    // provisions a company. Reject and "under review" are reversible status
+    // changes, so gating them would only add friction (PIN_PLAN.md §2).
+    if (status === 'approved') setPinGate(request);
+    else setConfirmation(request);
   }
 
   /** Admin-only role change — this is how a trainee gets absorbed, or any user
@@ -569,12 +592,14 @@ export default function AdminDashboard() {
       toast.error('Cannot change role', 'This is a local sample record, not a database account.');
       return;
     }
-    setConfirmation({
+    // PIN-gated: this is the highest-stakes action in the portal — it decides
+    // which portal a user can reach.
+    setPinGate({
       title: 'Change this user\'s role?',
       message: `${user.name} will become a ${role}. On their next sign-in they will land in the ${role} portal.`,
       confirmLabel: 'Change role',
       onConfirm: async () => {
-        setConfirmation(null);
+        setPinGate(null);
         const { error } = await setUserRole(user.id, role);
         if (error) {
           toast.error('Role Update Failed', error.message);
@@ -621,6 +646,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-navy-950">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
+      {pinGate && <PinPromptModal {...pinGate} onCancel={() => setPinGate(null)} />}
       {reviewingBooking && (
         <BookingReviewModal
           booking={state.bookings.find(b => b.id === reviewingBooking)!}

@@ -4,6 +4,7 @@ import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, ArrowLeft, LogO
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import PinPromptModal from '../components/PinPromptModal';
 import PinSettings from '../components/PinSettings';
 import { updateBookingRow } from '../lib/supabase';
 
@@ -41,6 +42,9 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
   const [photoType, setPhotoType] = useState<'before' | 'progress' | 'after'>('progress');
   const [saving, setSaving] = useState(false);
   const [confirmation, setConfirmation] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
+  // PIN-gated variant of `confirmation`. Only "Mark as Completed" uses it — see
+  // requestStatusUpdate below and PIN_PLAN.md §2.
+  const [pinGate, setPinGate] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
 
   const nextStatus = STATUS_TRANSITIONS[booking.status];
 
@@ -76,12 +80,27 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
   }
 
   function requestStatusUpdate(newStatus: BookingStatus) {
-    setConfirmation({
+    const request = {
       title: 'Update job status?',
       message: `This will mark the job as ${STATUS_LABELS[newStatus]}.`,
       confirmLabel: 'Update',
-      onConfirm: () => { updateStatus(newStatus); setConfirmation(null); },
-    });
+      onConfirm: () => { updateStatus(newStatus); setConfirmation(null); setPinGate(null); },
+    };
+
+    // PIN-gated ONLY for 'completed'. It is the irreversible claim that the work
+    // is done, the customer is notified immediately, and it cannot be quietly
+    // undone. en_route / in_progress are reversible and high-frequency, so
+    // gating them would only teach staff to share their PIN (PIN_PLAN.md §2).
+    if (newStatus === 'completed') {
+      setPinGate({
+        ...request,
+        title: 'Mark this job complete?',
+        message: `This tells the customer their ${booking.service} is finished. Because it cannot be quietly undone, we ask for your PIN.`,
+        confirmLabel: 'Complete Job',
+      });
+    } else {
+      setConfirmation(request);
+    }
   }
 
   function saveNotes() {
@@ -152,6 +171,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
   return (
     <div className="bg-navy-800 border border-gold-400/10 rounded-xl overflow-hidden">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
+      {pinGate && <PinPromptModal {...pinGate} onCancel={() => setPinGate(null)} />}
       <div className="p-5">
         <div className="flex items-start justify-between mb-3">
           <div>
