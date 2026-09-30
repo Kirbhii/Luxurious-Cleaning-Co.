@@ -160,6 +160,7 @@ export default function CustomerPortal() {
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [profileForm, setProfileForm] = useState({ name: user.name, email: user.email, phone: user.phone });
   const [profileMessage, setProfileMessage] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
   const [confirmation, setConfirmation] = useState<{
     title: string;
     message: string;
@@ -250,37 +251,42 @@ export default function CustomerPortal() {
   function handleProfileSave(e: React.FormEvent) {
     e.preventDefault();
     setProfileMessage('');
-    const duplicateEmail = state.users.some(account => account.id !== user.id && account.email.toLowerCase() === profileForm.email.trim().toLowerCase());
-    if (!profileForm.name.trim() || !profileForm.email.trim()) {
-      const errorMsg = 'Name and email are required.';
+    if (!profileForm.name.trim()) {
+      const errorMsg = 'Name is required.';
       setProfileMessage(errorMsg);
       toast.error('Validation Error', errorMsg);
       return;
     }
-    if (duplicateEmail) {
-      const errorMsg = 'That email is already in use.';
-      setProfileMessage(errorMsg);
-      toast.error('Email Already Exists', errorMsg);
-      return;
-    }
     setConfirmation({
       title: 'Save profile changes?',
-      message: 'Your name, email, and phone number will be updated.',
+      message: 'Your name and phone number will be updated.',
       confirmLabel: 'Save',
-      onConfirm: () => {
+      onConfirm: async () => {
+        setConfirmation(null);
+        const name = profileForm.name.trim();
+        const phone = profileForm.phone.trim();
+
+        // Persist FIRST, then mirror into local state. The previous version only
+        // dispatched to the store, so the UI reported success while the database
+        // was never touched — the change silently vanished on the next reload.
+        setProfileSaving(true);
+        const { error } = await updateProfile(user.id, { name, phone });
+        setProfileSaving(false);
+
+        if (error) {
+          setProfileMessage('Could not save your changes. Please try again.');
+          toast.error('Save Failed', error.message);
+          return;
+        }
+
+        // Email is not editable here (the profiles trigger pins it and the column
+        // is not granted for UPDATE), so pass the existing value through unchanged.
         dispatch({
           type: 'UPDATE_USER_PROFILE',
-          payload: {
-            userId: user.id,
-            name: profileForm.name.trim(),
-            email: profileForm.email.trim(),
-            phone: profileForm.phone.trim(),
-          },
+          payload: { userId: user.id, name, email: user.email, phone },
         });
-        const successMsg = 'Profile updated successfully.';
-        setProfileMessage(successMsg);
+        setProfileMessage('Profile updated successfully.');
         toast.success('Profile Updated!', 'Your information has been saved.');
-        setConfirmation(null);
       },
     });
   }
@@ -606,17 +612,22 @@ export default function CustomerPortal() {
               </div>
               <form onSubmit={handleProfileSave} className="space-y-4">
                 {[
-                  { key: 'name', label: 'Full name', type: 'text' },
-                  { key: 'email', label: 'Email address', type: 'email' },
-                  { key: 'phone', label: 'Phone number', type: 'tel' },
+                  { key: 'name', label: 'Full name', type: 'text', locked: false },
+                  { key: 'email', label: 'Email address', type: 'email', locked: true },
+                  { key: 'phone', label: 'Phone number', type: 'tel', locked: false },
                 ].map(field => (
                   <label key={field.key} className="block">
-                    <span className="block text-xs font-medium text-cream-300 mb-1.5">{field.label}</span>
+                    <span className="block text-xs font-medium text-cream-300 mb-1.5">
+                      {field.label}
+                      {field.locked && <span className="ml-2 text-cream-300/50">(cannot be changed here)</span>}
+                    </span>
                     <input
                       type={field.type}
                       value={profileForm[field.key as keyof typeof profileForm]}
                       onChange={e => setProfileForm(form => ({ ...form, [field.key]: e.target.value }))}
-                      className="w-full bg-navy-700 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/50"
+                      readOnly={field.locked}
+                      aria-readonly={field.locked}
+                      className={`w-full bg-navy-700 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 placeholder-cream-300/40 focus:outline-none focus:border-gold-400/50${field.locked ? ' opacity-50 cursor-not-allowed' : ''}`}
                     />
                   </label>
                 ))}
@@ -624,8 +635,8 @@ export default function CustomerPortal() {
                   <span className={`text-xs ${profileMessage.includes('successfully') ? 'text-emerald-400' : 'text-red-400'}`}>
                     {profileMessage}
                   </span>
-                  <button type="submit" className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
-                    <Save size={14} /> Save Changes
+                  <button type="submit" disabled={profileSaving} className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors disabled:opacity-60">
+                    <Save size={14} /> {profileSaving ? 'Saving…' : 'Save Changes'}
                   </button>
                 </div>
               </form>

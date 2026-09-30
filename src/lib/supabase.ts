@@ -393,11 +393,16 @@ export async function updateProfile(
   userId: string,
   fields: Partial<Pick<ProfileRow, 'name' | 'phone' | 'avatar_url'>>
 ) {
+  // NOTE: the returning clause must list columns explicitly. A bare .select()
+  // expands to `RETURNING *`, which requires SELECT privilege on EVERY column —
+  // including pin_hash, which migration 007 revoked from the client roles. The
+  // privilege check then fails and the whole UPDATE rolls back, so the change
+  // silently never persists even though the request looked successful.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabase.from('profiles') as any)
     .update(fields)
     .eq('id', userId)
-    .select()
+    .select(PROFILE_COLUMNS)
     .single();
   return { data: data as ProfileRow | null, error };
 }
