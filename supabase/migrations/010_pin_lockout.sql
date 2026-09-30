@@ -15,8 +15,9 @@
 --   Hole D — and if no PIN existed yet, Hole B's fix proved nothing, because
 --            there was no old PIN to ask for. An attacker holding an unattended
 --            session could simply create the first PIN and then use it. Closed
---            by requiring the account PASSWORD for first-time setup, verified
---            server-side against auth.users.
+--            by requiring the account PASSWORD for first-time setup, checked
+--            server-side against auth.users.encrypted_password — inlined into
+--            set_user_pin() rather than exposed as its own function, see §6.
 --
 --   Hole C — CREATE OR REPLACE with a changed signature does NOT replace: it
 --            creates an OVERLOAD and leaves the old function callable, which
@@ -29,6 +30,13 @@
 --
 -- Also adds pin_lock_status() so the UI can show a countdown WITHOUT submitting
 -- a PIN (submitting one just to discover the lock would burn an attempt).
+--
+-- ⚠ GRANT/REVOKE note that bit us once already (see §7): Supabase ships
+--   ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO anon, authenticated,
+--   service_role, so EVERY newly created function in `public` carries a DIRECT
+--   grant to those roles. A `REVOKE ... FROM PUBLIC` does NOT remove a direct
+--   role grant — the roles have to be named explicitly. This is the same shape
+--   as migration 007 §2, where a table-level GRANT beat a column-level REVOKE.
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -247,58 +255,29 @@ $$;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 6a. verify_own_password() — the missing proof for FIRST-TIME PIN setup
+-- 6. set_user_pin() — prove something beyond the session, always
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Hole D: a staff member who had never set a PIN could have one installed by
 -- anyone holding their open session — no proof required, because there was no
 -- existing PIN to prove. That attacker then holds the key to every gated
 -- action, which is precisely the threat the PIN exists to stop.
 --
--- The fix is to require the account PASSWORD for first-time setup. It is
--- enforced here, server-side, not just in the UI — a client-side-only check
--- would be bypassed by calling the RPC directly with the anon key.
+-- The fix is to require the account PASSWORD for first-time setup, checked
+-- server-side against auth.users.encrypted_password, never in the browser.
 --
--- Supabase stores bcrypt hashes in auth.users.encrypted_password; the postgres
--- role can read that table, and this function is SECURITY DEFINER owned by it.
-
-CREATE OR REPLACE FUNCTION public.verify_own_password(p_password TEXT)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, auth, extensions
-AS $$
-DECLARE
-  enc TEXT;
-BEGIN
-  IF auth.uid() IS NULL THEN
-    RAISE EXCEPTION 'not authenticated' USING ERRCODE = '42501';
-  END IF;
-
-  IF p_password IS NULL OR p_password = '' THEN
-    RETURN FALSE;
-  END IF;
-
-  SELECT u.encrypted_password INTO enc
-  FROM auth.users u
-  WHERE u.id = auth.uid();
-
-  IF enc IS NULL OR enc = '' THEN
-    RETURN FALSE;
-  END IF;
-
-  RETURN enc = extensions.crypt(p_password, enc);
-END;
-$$;
-
-
--- ─────────────────────────────────────────────────────────────────────────────
--- 6b. set_user_pin() — prove something beyond the session, always
--- ─────────────────────────────────────────────────────────────────────────────
+-- ⚠ This was first written as a separate public.verify_own_password() helper.
+--   That helper was verifiably callable by `authenticated` even after a
+--   REVOKE ... FROM PUBLIC, because Supabase's default privileges grant EXECUTE
+--   DIRECTLY to the role (see §7). That made it a free, unthrottled password
+--   oracle for the caller's own account. The comparison is inlined here instead:
+--   the most reliable way to make something uncallable is to not have it.
+--
 -- ⚠ Hole C: DROP the older signatures FIRST. CREATE OR REPLACE with a different
 -- argument list creates an OVERLOAD rather than replacing, so leaving either
 -- older version in place would keep a working bypass of Hole B or Hole D.
 DROP FUNCTION IF EXISTS public.set_user_pin(TEXT);
 DROP FUNCTION IF EXISTS public.set_user_pin(TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.verify_own_password(TEXT);
 
 CREATE OR REPLACE FUNCTION public.set_user_pin(
   p_new_pin     TEXT,
@@ -308,12 +287,13 @@ CREATE OR REPLACE FUNCTION public.set_user_pin(
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, extensions
+SET search_path = public, auth, extensions
 AS $$
 DECLARE
   existing     TEXT;
   locked_until TIMESTAMPTZ;
   mins_left    INT;
+  enc          TEXT;
 BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'not authenticated' USING ERRCODE = '42501';
@@ -353,7 +333,12 @@ BEGIN
     IF p_password IS NULL OR p_password = '' THEN
       RAISE EXCEPTION 'your account password is required to create a PIN' USING ERRCODE = '42501';
     END IF;
-    IF NOT public.verify_own_password(p_password) THEN
+
+    SELECT u.encrypted_password INTO enc
+    FROM auth.users u
+    WHERE u.id = auth.uid();
+
+    IF enc IS NULL OR enc = '' OR enc <> extensions.crypt(p_password, enc) THEN
       RAISE EXCEPTION 'account password is incorrect' USING ERRCODE = '42501';
     END IF;
   END IF;
@@ -373,26 +358,36 @@ $$;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 7. Grants
 -- ─────────────────────────────────────────────────────────────────────────────
--- ⚠ The argument list below must match the CURRENT signature exactly. §6b just
--- dropped set_user_pin(TEXT) and set_user_pin(TEXT, TEXT), so naming either of
--- those here would abort with 42883 "function does not exist" — and a REVOKE
--- that never ran would leave the default PUBLIC EXECUTE on the new function.
+-- ⚠ TWO separate things go wrong here, and both did.
 --
--- A freshly CREATEd function is granted EXECUTE to PUBLIC by default, so the
--- REVOKE is not cosmetic: without it every logged-out anon key could call these.
+-- (1) The argument list must match the CURRENT signature exactly. §6 just
+--     dropped set_user_pin(TEXT) and set_user_pin(TEXT, TEXT), so naming either
+--     of those would abort with 42883 "function does not exist" — and a REVOKE
+--     that never ran leaves the privilege in place.
 --
--- verify_own_password() is deliberately NOT granted to the client. It is only
--- ever called from inside set_user_pin(), which is SECURITY DEFINER and owned by
--- postgres, so it has EXECUTE regardless. Exposing it directly would add a
--- standalone password-checking oracle for no benefit.
+-- (2) REVOKE ... FROM PUBLIC IS NOT ENOUGH. Supabase ships
+--     ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO anon,
+--     authenticated, service_role, so every newly created function in `public`
+--     carries a DIRECT grant to those roles. Revoking from PUBLIC does not
+--     touch a direct role grant — the roles must be named explicitly. Same
+--     shape as migration 007 §2, where a table-level GRANT beat a column-level
+--     REVOKE.
+--
+--     This is not theoretical. The first version of this migration shipped
+--     verify_own_password() with only a REVOKE FROM PUBLIC, and the V4 check
+--     below caught that `authenticated` could still call it directly — a free,
+--     unthrottled password oracle for the caller's own account. Hole D is now
+--     inlined into set_user_pin() (§6) and that function is dropped, so there is
+--     nothing left to mis-grant. V4 asserts it stays gone.
+--
+-- service_role is deliberately left alone — it is the trusted server role.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    REVOKE ALL ON FUNCTION public.set_user_pin(TEXT, TEXT, TEXT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.verify_user_pin(TEXT)          FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.has_user_pin()                 FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.pin_lock_status()              FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.verify_own_password(TEXT)      FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.set_user_pin(TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+    REVOKE ALL ON FUNCTION public.verify_user_pin(TEXT)          FROM PUBLIC, anon, authenticated;
+    REVOKE ALL ON FUNCTION public.has_user_pin()                 FROM PUBLIC, anon, authenticated;
+    REVOKE ALL ON FUNCTION public.pin_lock_status()              FROM PUBLIC, anon, authenticated;
 
     GRANT EXECUTE ON FUNCTION public.set_user_pin(TEXT, TEXT, TEXT) TO authenticated;
     GRANT EXECUTE ON FUNCTION public.verify_user_pin(TEXT)          TO authenticated;
@@ -406,7 +401,7 @@ END $$;
 -- 8. Verification
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- V1 — one row. Expect: cols_ok = true, trigger_ok = true, lock_columns_locked = true,
+-- V1 — one row. Expect: cols_ok = 2, trigger_ok = true, lock_columns_locked = true,
 --      and set_user_pin_overloads = 1 (NOT 2 — see Hole C).
 SELECT
   (SELECT count(*) FROM information_schema.columns
@@ -421,15 +416,15 @@ SELECT
   (SELECT count(*) FROM pg_proc WHERE proname = 'set_user_pin')          AS set_user_pin_overloads;
 
 -- V2 — every PIN function, its signature and security posture.
---   Expect: set_user_pin has exactly THREE args; all five are SECURITY DEFINER.
+--   Expect exactly FOUR rows: set_user_pin has THREE args, and all four are
+--   SECURITY DEFINER. verify_own_password must NOT appear — it is inlined (§6).
 SELECT
   p.proname,
   pg_get_function_identity_arguments(p.oid) AS args,
   p.prosecdef                               AS security_definer
 FROM pg_proc p
 WHERE p.pronamespace = 'public'::regnamespace
-  AND p.proname IN ('set_user_pin','verify_user_pin','has_user_pin',
-                    'pin_lock_status','verify_own_password')
+  AND p.proname IN ('set_user_pin','verify_user_pin','has_user_pin','pin_lock_status')
 ORDER BY p.proname;
 
 -- V3 — the client-safe read set is intact (nothing accidentally lost).
@@ -440,9 +435,23 @@ SELECT
   has_column_privilege('authenticated','public.profiles','phone','SELECT')    AS can_read_phone,
   has_column_privilege('authenticated','public.profiles','name','UPDATE')     AS can_write_name;
 
--- V4 — the two functions that must stay client-callable, and the one that must not.
---   Expect: set_user_pin = true, pin_lock_status = true, verify_own_password = false.
+-- V4 — the full client-facing posture: every function, BOTH client roles.
+--   Expect: auth_* = true  (the signed-in client needs all four)
+--           anon_* = false (a logged-out caller has no business here)
+--           verify_own_password_exists = 0
+--
+--   This is the check that caught the original defect: the first version had
+--   auth_check_password = true, because a REVOKE FROM PUBLIC does not remove
+--   Supabase's direct default grant to `authenticated`.
 SELECT
-  has_function_privilege('authenticated','public.set_user_pin(text,text,text)','EXECUTE') AS client_can_set_pin,
-  has_function_privilege('authenticated','public.pin_lock_status()','EXECUTE')            AS client_can_read_lock,
-  has_function_privilege('authenticated','public.verify_own_password(text)','EXECUTE')    AS client_can_check_password;
+  has_function_privilege('authenticated','public.set_user_pin(text,text,text)','EXECUTE') AS auth_set_pin,
+  has_function_privilege('authenticated','public.verify_user_pin(text)','EXECUTE')        AS auth_verify_pin,
+  has_function_privilege('authenticated','public.has_user_pin()','EXECUTE')               AS auth_has_pin,
+  has_function_privilege('authenticated','public.pin_lock_status()','EXECUTE')            AS auth_lock_status,
+  has_function_privilege('anon','public.set_user_pin(text,text,text)','EXECUTE')          AS anon_set_pin,
+  has_function_privilege('anon','public.verify_user_pin(text)','EXECUTE')                 AS anon_verify_pin,
+  has_function_privilege('anon','public.has_user_pin()','EXECUTE')                        AS anon_has_pin,
+  has_function_privilege('anon','public.pin_lock_status()','EXECUTE')                     AS anon_lock_status,
+  (SELECT count(*) FROM pg_proc
+    WHERE pronamespace = 'public'::regnamespace
+      AND proname = 'verify_own_password')                                               AS verify_own_password_exists;
