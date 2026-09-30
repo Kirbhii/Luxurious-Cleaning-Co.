@@ -72,6 +72,26 @@ export default function Booking() {
   useEffect(() => {
     formTopRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
   }, [step]);
+
+  // Keep the identity fields in sync with the signed-in profile.
+  //
+  // /book is a PUBLIC route, so this component mounts before auth resolves and
+  // useState() captures name/email/phone as ''. Logging in through the auth
+  // prompt (or a reload while signed in) then fills `user` but never re-runs the
+  // initializer — so the fields stayed blank and canProceed() blocked the user
+  // on step 2 forever. The panel is read-only once signed in, so the profile is
+  // authoritative and must overwrite whatever the guest typed.
+  useEffect(() => {
+    if (!user) return;
+    setForm(f => {
+      const name = user.name || '';
+      const email = user.email || '';
+      const phone = user.phone || '';
+      if (f.name === name && f.email === email && f.phone === phone) return f;
+      return { ...f, name, email, phone };
+    });
+  }, [user?.id, user?.name, user?.email, user?.phone]);
+
   const isGoldOnlyService = GOLD_ONLY_SERVICES.includes(form.service);
   const canBookGoldService = !isGoldOnlyService || isGold;
 
