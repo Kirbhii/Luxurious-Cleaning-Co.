@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import type { UserRole } from '../store';
 import {
   signIn,
@@ -405,10 +405,10 @@ export default function Login() {
 
   if (showOtpScreen) {
     return (
-      <div className="min-h-screen bg-navy-950 flex items-center justify-center px-6 py-10 relative overflow-hidden">
+      <div className="min-h-screen bg-navy-950 flex items-start justify-center px-4 py-8 sm:items-center sm:px-6 sm:py-10 relative overflow-hidden">
         <img src={loginImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-navy-950/80 backdrop-blur-[2px]" />
-        <div className="relative w-full max-w-lg rounded-2xl border border-gold-400/20 bg-navy-900/95 px-6 py-10 text-center shadow-2xl md:px-12">
+        <div className="relative w-full max-w-lg rounded-2xl border border-gold-400/20 bg-navy-900/95 px-4 py-8 text-center shadow-2xl sm:px-6 sm:py-10 md:px-12">
           <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-6 h-16 max-h-16 w-auto max-w-[280px] object-contain" />
           
           {isAdminMfa ? (
@@ -438,7 +438,7 @@ export default function Login() {
 
           {isAdminMfa && (
             <>
-              <div className="mt-8 flex justify-center gap-2 sm:gap-3">
+              <div className="mt-8 flex justify-center gap-1.5 sm:gap-3">
                 {otp.map((digit, index) => (
                   <input
                     key={index}
@@ -450,7 +450,7 @@ export default function Login() {
                     inputMode="numeric"
                     maxLength={1}
                     aria-label={`MFA digit ${index + 1}`}
-                    className="h-12 w-10 rounded-lg border border-gold-400/25 bg-navy-800 text-center text-xl font-semibold text-cream-100 outline-none transition-colors focus:border-gold-400 focus:ring-1 focus:ring-gold-400/40 sm:h-14 sm:w-12"
+                    className="h-12 w-9 rounded-lg border border-gold-400/25 bg-navy-800 text-center text-lg font-semibold text-cream-100 outline-none transition-colors focus:border-gold-400 focus:ring-1 focus:ring-gold-400/40 sm:h-14 sm:w-12 sm:text-xl"
                   />
                 ))}
               </div>
@@ -503,7 +503,24 @@ export default function Login() {
       </div>
 
       {/* Form panel */}
-      <div className="h-screen flex-1 flex flex-col justify-start overflow-y-auto px-8 py-8 md:px-12 md:py-12 lg:max-w-md xl:max-w-lg">
+      {/*
+        Mobile: min-h-screen + no fixed height, so the page scrolls the way a
+        phone expects. The old h-screen here created a nested scroll container
+        sized to 100vh — taller than the visible viewport once browser chrome is
+        accounted for — which put the submit button and the terms line out of
+        reach on the longer register form.
+        Desktop (lg): h-screen + overflow-y-auto restored, so the image column
+        still stays pinned to the viewport and the panel scrolls inside itself.
+      */}
+      <div className="min-h-screen flex-1 flex flex-col justify-start px-6 py-6 sm:px-8 sm:py-8 md:px-12 md:py-12 lg:h-screen lg:overflow-y-auto lg:max-w-md xl:max-w-lg">
+        <Link
+          to="/"
+          className="mb-6 inline-flex items-center gap-1.5 self-start text-xs font-medium text-cream-300 transition-colors hover:text-cream-100"
+        >
+          <ArrowLeft size={14} />
+          Back to home
+        </Link>
+
         <div className="mb-8">
           <div className="mb-6">
             <Logo height={56} align="left" />

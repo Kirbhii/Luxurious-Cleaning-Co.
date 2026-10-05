@@ -94,7 +94,7 @@ export default function ResetPassword() {
       </div>
 
       {/* Form panel */}
-      <div className="h-screen flex-1 flex flex-col justify-start overflow-y-auto px-8 py-8 md:px-12 md:py-12 lg:max-w-md xl:max-w-lg">
+      <div className="min-h-screen flex-1 flex flex-col justify-start px-6 py-6 sm:px-8 sm:py-8 md:px-12 md:py-12 lg:h-screen lg:overflow-y-auto lg:max-w-md xl:max-w-lg">
         <div className="mb-8">
           <Link to="/" className="flex items-center self-start -ml-2 mb-10 translate-y-6">
             <img src={logoImg} alt="Luxurious Cleaning Co." className="h-12 max-h-12 w-auto max-w-[240px] object-contain" />
