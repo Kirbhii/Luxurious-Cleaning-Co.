@@ -226,7 +226,7 @@ export default function Home() {
         </div>
 
         {/* Main content grid */}
-        <div className="relative flex-1 max-w-4xl mx-auto w-full px-6 sm:px-8 lg:px-12 flex items-center justify-center py-16 pb-32">
+        <div className="relative flex-1 max-w-4xl mx-auto w-full px-6 sm:px-8 lg:px-12 flex items-center justify-center py-16 pb-16 sm:pb-32">
 
           {/* Centered headline and call-to-action */}
           <div className="text-center">
@@ -287,8 +287,20 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Bottom feature strip — pinned to bottom exactly like the reference */}
-       <div className="absolute bottom-0 left-0 right-0">
+        {/*
+          Bottom feature strip — pinned to the bottom of the hero like the reference,
+          but ONLY where the three blocks sit side by side.
+
+          Below sm: the grid collapses to one column, which makes the strip ~410px
+          tall. Pinned absolutely at that height it covered the hero's own content:
+          the whole "Book a Service" / "Our Services" row and the trust badges, and
+          on a 320px-wide phone the last 33px of the paragraph too. The primary
+          call to action was invisible and unclickable on every phone.
+
+          So on mobile it sits in normal flow, below the content. From sm: up the
+          strip is only ~136px tall and the overlay is restored unchanged.
+        */}
+       <div className="relative sm:absolute sm:bottom-0 sm:left-0 sm:right-0">
   <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#0E0C09]">
     <FeatureBlock
       icon="⏱️"
