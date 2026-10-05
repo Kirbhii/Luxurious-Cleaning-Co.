@@ -30,6 +30,7 @@ import ApplicationReviewModal from '../components/ApplicationReviewModal';
 import CertificateModal from '../components/CertificateModal';
 import ResumeLink from '../components/ResumeLink';
 import PinSettings from '../components/PinSettings';
+import MfaSettings from '../components/MfaSettings';
 
 const BOOKING_STATUSES: BookingStatus[] = [
   'pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'completed', 'cancelled', 'awaiting_quote',
@@ -1260,7 +1261,12 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {tab === 'security' && <PinSettings />}
+        {tab === 'security' && (
+          <div className="space-y-5">
+            <PinSettings />
+            <MfaSettings />
+          </div>
+        )}
       </div>
     </div>
   );

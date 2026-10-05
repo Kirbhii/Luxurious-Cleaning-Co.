@@ -433,6 +433,70 @@ export async function listMfaFactors() {
   return { data, error };
 }
 
+/** Turn off (unenroll) an MFA factor. */
+export async function unenrollMfa(factorId: string) {
+  const { error } = await supabase.auth.mfa.unenroll({ factorId });
+  return { error };
+}
+
+type RawFactor = { id: string; factor_type?: string; status?: string };
+
+/** Narrow the SDK's factor list to plain fields we care about. */
+function totpFactors(data: unknown): RawFactor[] {
+  const all = (data as { all?: RawFactor[] } | null)?.all ?? [];
+  return all.filter(f => f.factor_type === 'totp');
+}
+
+/**
+ * The user's *verified* TOTP factor, if any.
+ *
+ * An enrolled-but-unverified factor does NOT count. Supabase only treats a
+ * factor as active once a code has been checked against it, so a half-finished
+ * enrollment must never be mistaken for protection that actually exists.
+ */
+export async function verifiedTotpFactor(): Promise<{
+  factorId: string | null;
+  error: { message: string } | null;
+}> {
+  const { data, error } = await supabase.auth.mfa.listFactors();
+  if (error) return { factorId: null, error: { message: error.message } };
+  const verified = totpFactors(data).find(f => f.status === 'verified');
+  return { factorId: verified?.id ?? null, error: null };
+}
+
+/**
+ * Factors that were enrolled but never verified — the leftovers of an abandoned
+ * setup. Clearing them before a fresh enroll avoids "factor already exists".
+ */
+export async function unverifiedTotpFactorIds(): Promise<string[]> {
+  const { data } = await supabase.auth.mfa.listFactors();
+  return totpFactors(data).filter(f => f.status !== 'verified').map(f => f.id);
+}
+
+/**
+ * Whether the current session still owes a second factor.
+ *
+ * Reads Supabase's own assurance level instead of guessing from our state:
+ * `nextLevel === 'aal2'` means a verified factor exists, and a lower
+ * `currentLevel` means this session has not presented it yet. So the step-up
+ * can only ever fire for someone who actually enrolled — nobody gets locked out
+ * by a factor they never set up.
+ */
+export async function mfaStepUpRequired(): Promise<{
+  required: boolean;
+  factorId: string | null;
+  error: { message: string } | null;
+}> {
+  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (error) return { required: false, factorId: null, error: { message: error.message } };
+
+  const needsStepUp = data?.nextLevel === 'aal2' && data?.currentLevel !== 'aal2';
+  if (!needsStepUp) return { required: false, factorId: null, error: null };
+
+  const { factorId, error: factorError } = await verifiedTotpFactor();
+  return { required: factorId !== null, factorId, error: factorError };
+}
+
 // ─── Data Helpers ────────────────────────────────────────────────────────────
 
 /** Fetch all bookings visible to the current user (RLS handles scoping). */

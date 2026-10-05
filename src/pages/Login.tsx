@@ -8,6 +8,9 @@ import {
   fetchProfile,
   resetPassword,
   verifyAdminMfa,
+  challengeAdminMfa,
+  mfaStepUpRequired,
+  signOut,
 } from '../lib/supabase';
 import { useToast } from '../components/ToastContainer';
 import PasswordCriteria from '../components/PasswordCriteria';
@@ -132,7 +135,36 @@ export default function Login() {
         return;
       }
 
-      // 3. Show success message and navigate
+      // 3. If a verified authenticator is enrolled, the password alone is not
+      //    enough — hold the session at aal1 and ask for the 6-digit code.
+      //    This only fires when a factor actually exists, so an admin who has
+      //    never enrolled one still signs in exactly as before.
+      const { required, factorId, error: mfaError } = await mfaStepUpRequired();
+      if (mfaError) {
+        // Fail closed. We could not establish whether a second factor is owed,
+        // so do not hand over a session that may be missing it.
+        await signOut();
+        const errorMsg = 'Could not verify your security settings. Please try again.';
+        setError(errorMsg);
+        toast.error('Sign-in Error', errorMsg);
+        return;
+      }
+      if (required && factorId) {
+        const { data: challenge, error: challengeError } = await challengeAdminMfa(factorId);
+        if (challengeError || !challenge) {
+          await signOut();
+          const errorMsg = 'Could not start two-factor authentication. Please try again.';
+          setError(errorMsg);
+          toast.error('Two-Factor Error', errorMsg);
+          return;
+        }
+        setOtp(['', '', '', '', '', '']);
+        setOtpMessage('');
+        setPendingMfa({ factorId, challengeId: challenge.id });
+        return;
+      }
+
+      // 4. Show success message and navigate
       toast.success(
         'Welcome back!',
         `Logged in as ${profile.name || profile.email}`
@@ -434,7 +466,17 @@ export default function Login() {
               <div className="mt-7 border-t border-gold-400/10 pt-5">
                 <button
                   type="button"
-                  onClick={() => { setPendingMfa(null); setError(''); }}
+                  onClick={async () => {
+                    // The password step already produced a valid aal1 session.
+                    // Walking away from the second factor must not leave that
+                    // session alive, so abandon it explicitly rather than just
+                    // hiding this screen.
+                    await signOut();
+                    setPendingMfa(null);
+                    setOtp(['', '', '', '', '', '']);
+                    setOtpMessage('');
+                    setError('');
+                  }}
                   className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
                 >
                   ← Back to sign in
