@@ -5,6 +5,7 @@ import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { PartnerProject } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
 import PinSettings from '../components/PinSettings';
+import MfaSettings from '../components/MfaSettings';
 import { insertPartnerProject } from '../lib/supabase';
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
@@ -395,7 +396,12 @@ export default function PartnerPortal() {
           </div>
         )}
 
-        {tab === 'security' && <PinSettings />}
+        {tab === 'security' && (
+          <div className="space-y-5">
+            <PinSettings />
+            <MfaSettings />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert, Loader2, Smartphone, X } from 'lucide-react';
+import { useCurrentUser, type UserRole } from '../store';
 import {
   enrollAdminMfa,
   challengeAdminMfa,
@@ -12,7 +13,8 @@ import {
 type Enrollment = { factorId: string; qrCode: string; secret: string };
 
 /**
- * Admin-only "two-factor authentication" panel, shown in the Security tab.
+ * The "two-factor authentication" panel, shown in the Security tab of all three
+ * staff portals (admin, cleaner, partner).
  *
  * This is the other half of the login step-up in Login.tsx: the login screen
  * can only ask for a code if a factor exists, and a factor only counts once a
@@ -20,11 +22,49 @@ type Enrollment = { factorId: string; qrCode: string; secret: string };
  * nothing and must not be reported as if it did — hence the deliberate split
  * between "enrolled" and "verified".
  *
- * Nothing here is required. An admin who never enrolls still signs in with a
- * password alone, exactly as before; enrolling is what makes the second factor
- * mandatory for that account.
+ * Nothing here is required. A staff member who never enrolls still signs in
+ * with a password alone, exactly as before; enrolling is what makes the second
+ * factor mandatory for that account.
+ *
+ * The stakes differ per role, so the explanatory copy does too. Read from the
+ * store rather than a prop, so each portal can drop the component in unchanged.
+ * A cleaner being told about "every applicant's résumé" would be reading about
+ * access they do not have, which makes the warning easier to dismiss.
  */
+const ROLE_COPY: Record<UserRole, { heading: string; stakes: string; disableWarning: string }> = {
+  admin: {
+    heading: 'Why this matters for an admin',
+    stakes:
+      "An admin account can read every customer's address and phone number, every applicant's résumé, and can change anyone's role. A leaked password is the whole business.",
+    disableWarning:
+      "Turning this off means a stolen password is enough to open your account again — including every customer address, phone number and applicant résumé you can read.",
+  },
+  cleaner: {
+    heading: 'Why this matters for a cleaner',
+    stakes:
+      "A cleaner account can read customer addresses, phone numbers and entry instructions — the details that let someone walk up to a stranger's door.",
+    disableWarning:
+      'Turning this off means a stolen password is enough to open your account again — including the address and entry instructions for every home on your schedule.',
+  },
+  partner: {
+    heading: 'Why this matters for a partner',
+    stakes:
+      "A partner account can read your company's project pipeline and the client sites attached to it.",
+    disableWarning:
+      "Turning this off means a stolen password is enough to open your account again — including your company's project pipeline and client sites.",
+  },
+  customer: {
+    // Customers have no enrollment UI today; keep the map total so a role
+    // change can never render `undefined` copy.
+    heading: 'Why this matters',
+    stakes: 'A second factor stops a stolen password from being enough to open this account.',
+    disableWarning:
+      'Turning this off means a stolen password is enough to open your account again.',
+  },
+};
+
 export default function MfaSettings() {
+  const copy = ROLE_COPY[useCurrentUser()?.role ?? 'admin'];
   const [loading, setLoading] = useState(true);
   const [factorId, setFactorId] = useState<string | null>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
@@ -261,8 +301,7 @@ export default function MfaSettings() {
             {confirmDisable ? (
               <div className="rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-4">
                 <p className="text-xs text-red-200 leading-relaxed mb-3">
-                  Turning this off means a stolen password is enough to open your account again —
-                  including every customer address, phone number and applicant résumé you can read.
+                  {copy.disableWarning}
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
@@ -318,13 +357,10 @@ export default function MfaSettings() {
 
       <div className="bg-navy-800/60 border border-gold-400/10 rounded-2xl px-6 py-5">
         <h3 className="text-xs font-medium text-gold-400 uppercase tracking-[0.18em] mb-3">
-          Why this matters for an admin
+          {copy.heading}
         </h3>
         <ul className="space-y-2 text-xs text-cream-300 leading-relaxed">
-          <li>
-            An admin account can read every customer's address and phone number, every applicant's
-            résumé, and can change anyone's role. A leaked password is the whole business.
-          </li>
+          <li>{copy.stakes}</li>
           <li>
             A code from your phone cannot be guessed, phished from a login page, or reused after 30
             seconds.

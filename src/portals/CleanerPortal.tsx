@@ -6,6 +6,7 @@ import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
 import PinPromptModal from '../components/PinPromptModal';
 import PinSettings from '../components/PinSettings';
+import MfaSettings from '../components/MfaSettings';
 import { updateBookingRow } from '../lib/supabase';
 
 const SAMPLE_PHOTOS = [
@@ -387,7 +388,10 @@ export default function CleanerPortal() {
       <div className="max-w-5xl mx-auto px-6 py-8 min-h-[36rem]">
         <div className="space-y-5">
           {tab === 'security' ? (
-            <PinSettings />
+            <>
+              <PinSettings />
+              <MfaSettings />
+            </>
           ) : tab === 'active' ? (
             active.length === 0 ? (
               <div className="text-center py-16 text-cream-300">No active jobs assigned.</div>

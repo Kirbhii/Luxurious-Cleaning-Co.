@@ -400,11 +400,15 @@ export default function Login() {
         otpRefs.current[0]?.focus();
         return;
       }
-      // Clear BOTH flags before navigating: ProtectedRoute treats either one as
-      // "not signed in" and would bounce us straight back to /login.
+      // Clear BOTH flags: ProtectedRoute treats either one as "not signed in"
+      // and would bounce us straight back to /login.
+      //
+      // Deliberately NOT navigating here. LoginRoute is the single navigation
+      // authority and maps role -> portal; a hardcoded '/portal/admin' sent a
+      // cleaner or partner to the wrong portal, where ProtectedRoute's role
+      // check bounced them to '/'. Their OTP step could never complete.
       dispatch({ type: 'SET_MFA_PENDING', payload: null });
       dispatch({ type: 'SET_MFA_REQUIRED', payload: false });
-      navigate('/portal/admin');
     } catch (err) {
       console.error('[MFA]', err);
       setOtpMessage('Verification failed. Please try again.');
