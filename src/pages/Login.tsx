@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, ArrowLeft, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
-import type { UserRole } from '../store';
+import { useStore, type UserRole } from '../store';
 import {
   signIn,
   signUp,
@@ -9,7 +9,7 @@ import {
   resetPassword,
   verifyAdminMfa,
   challengeAdminMfa,
-  mfaStepUpRequired,
+  verifiedTotpFactor,
   signOut,
 } from '../lib/supabase';
 import { useToast } from '../components/ToastContainer';
@@ -43,11 +43,7 @@ type RegForm = {
   role: UserRole;
 };
 
-// Pending MFA state after a successful admin password check
-type PendingMfa = {
-  factorId: string;
-  challengeId: string;
-};
+// PendingMfa now lives in the store — see `PendingMfa` in ../store for why.
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -55,6 +51,14 @@ export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const toast = useToast();
+
+  // Step-up state lives in the store, not here. LoginRoute wraps this component
+  // and redirects the instant `currentUser` is set — and signInWithPassword()
+  // AWAITS the onAuthStateChange callback that sets it, so the redirect lands
+  // before this function gets past step 1. Local state would be discarded.
+  const { state, dispatch } = useStore();
+  const pendingMfa = state.mfaPending;
+  const mfaRequired = state.mfaRequired;
 
   const [mode, setMode] = useState<'login' | 'register' | 'forgot-password'>(
     searchParams.get('mode') === 'register' ? 'register' : 'login'
@@ -65,7 +69,6 @@ export default function Login() {
   const [successMessage, setSuccessMessage] = useState('');
 
   // OTP / MFA state
-  const [pendingMfa, setPendingMfa] = useState<PendingMfa | null>(null);
   const [pendingVerifyEmail, setPendingVerifyEmail] = useState(''); // email-verify after signup
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [otpMessage, setOtpMessage] = useState('');
@@ -90,6 +93,46 @@ export default function Login() {
   });
 
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+
+  // ── Start the TOTP challenge whenever a step-up is owed ─────────────────────
+  // The store decides *whether* a second factor is owed — it has to, because
+  // only it sees the reload of a stored aal1 session. This component owns the
+  // challenge lifecycle, since only it renders the OTP screen.
+  //
+  // Guarded on `!pendingMfa` so it runs once per step-up, and it deliberately
+  // does not depend on anything that changes while the user types.
+  useEffect(() => {
+    if (!mfaRequired || pendingMfa) return;
+
+    let cancelled = false;
+    (async () => {
+      const { factorId, error: factorError } = await verifiedTotpFactor();
+      if (cancelled) return;
+
+      // Fail closed. A factor is owed but we cannot reach it, so abandon the
+      // aal1 session rather than leaving a live one behind a screen that can
+      // never be satisfied.
+      if (factorError || !factorId) {
+        await signOut();
+        setError('Could not start two-factor authentication. Please sign in again.');
+        return;
+      }
+
+      const { data: challenge, error: challengeError } = await challengeAdminMfa(factorId);
+      if (cancelled) return;
+      if (challengeError || !challenge) {
+        await signOut();
+        setError('Could not start two-factor authentication. Please sign in again.');
+        return;
+      }
+
+      setOtp(['', '', '', '', '', '']);
+      setOtpMessage('');
+      dispatch({ type: 'SET_MFA_PENDING', payload: { factorId, challengeId: challenge.id } });
+    })();
+
+    return () => { cancelled = true; };
+  }, [mfaRequired, pendingMfa, dispatch]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   function portalFor(role: UserRole) {
@@ -135,51 +178,19 @@ export default function Login() {
         return;
       }
 
-      // 3. If a verified authenticator is enrolled, the password alone is not
-      //    enough — hold the session at aal1 and ask for the 6-digit code.
-      //    This only fires when a factor actually exists, so an admin who has
-      //    never enrolled one still signs in exactly as before.
-      const { required, factorId, error: mfaError } = await mfaStepUpRequired();
-      if (mfaError) {
-        // Fail closed. We could not establish whether a second factor is owed,
-        // so do not hand over a session that may be missing it.
-        await signOut();
-        const errorMsg = 'Could not verify your security settings. Please try again.';
-        setError(errorMsg);
-        toast.error('Sign-in Error', errorMsg);
-        return;
-      }
-      if (required && factorId) {
-        const { data: challenge, error: challengeError } = await challengeAdminMfa(factorId);
-        if (challengeError || !challenge) {
-          await signOut();
-          const errorMsg = 'Could not start two-factor authentication. Please try again.';
-          setError(errorMsg);
-          toast.error('Two-Factor Error', errorMsg);
-          return;
-        }
-        setOtp(['', '', '', '', '', '']);
-        setOtpMessage('');
-        setPendingMfa({ factorId, challengeId: challenge.id });
-        return;
-      }
-
-      // 4. Show success message and navigate
+      // 3. Whether a second factor is owed is decided by the auth store, not
+      //    here. Supabase AWAITS the onAuthStateChange callback inside
+      //    signInWithPassword, and that callback resolves the step-up — so by
+      //    the time we get here the store already knows. It published the user
+      //    and the verdict together, which means LoginRoute will hold this
+      //    screen (and <Login /> stays mounted) whenever a code is required.
+      //
+      //    Navigation is therefore deliberately NOT done here: LoginRoute is
+      //    the single authority, and it applies the same ?redirect= rules.
       toast.success(
         'Welcome back!',
         `Logged in as ${profile.name || profile.email}`
       );
-
-      // Small delay for toast to show before navigation
-      setTimeout(() => {
-        const redirect = getSafeRedirect();
-        // Customers honor the redirect (e.g. /book, /membership); staff go to their portal
-        if (redirect && profile.role === 'customer') {
-          navigate(redirect);
-        } else {
-          navigate(portalFor(profile.role));
-        }
-      }, 300);
     } catch (err) {
       console.error('[Login]', err);
       const errorMsg = 'An unexpected error occurred. Please try again.';
@@ -389,7 +400,10 @@ export default function Login() {
         otpRefs.current[0]?.focus();
         return;
       }
-      // MFA passed — navigate to admin portal
+      // Clear BOTH flags before navigating: ProtectedRoute treats either one as
+      // "not signed in" and would bounce us straight back to /login.
+      dispatch({ type: 'SET_MFA_PENDING', payload: null });
+      dispatch({ type: 'SET_MFA_REQUIRED', payload: false });
       navigate('/portal/admin');
     } catch (err) {
       console.error('[MFA]', err);
@@ -400,8 +414,12 @@ export default function Login() {
   }
 
   // ── OTP screen (MFA or email verification) ───────────────────────────────────
-  const showOtpScreen = pendingMfa !== null || pendingVerifyEmail !== '';
-  const isAdminMfa = pendingMfa !== null;
+  // A step-up is owed but the challenge has not come back yet (e.g. right after
+  // a reload of a stored aal1 session). Render the same panel with a spinner so
+  // the sign-in form never flashes in between.
+  const preparingMfa = mfaRequired && pendingMfa === null && pendingVerifyEmail === '';
+  const showOtpScreen = pendingMfa !== null || pendingVerifyEmail !== '' || preparingMfa;
+  const isAdminMfa = pendingMfa !== null || preparingMfa;
 
   if (showOtpScreen) {
     return (
@@ -436,7 +454,13 @@ export default function Login() {
             </>
           )}
 
-          {isAdminMfa && (
+          {preparingMfa && (
+            <p className="mt-8 text-sm text-cream-300 animate-pulse">
+              Preparing your authenticator challenge…
+            </p>
+          )}
+
+          {pendingMfa !== null && (
             <>
               <div className="mt-8 flex justify-center gap-1.5 sm:gap-3">
                 {otp.map((digit, index) => (
@@ -472,7 +496,11 @@ export default function Login() {
                     // session alive, so abandon it explicitly rather than just
                     // hiding this screen.
                     await signOut();
-                    setPendingMfa(null);
+                    // Clear mfaRequired too, or the challenge effect would
+                    // immediately start a fresh one and bounce the user back
+                    // onto the OTP screen they just dismissed.
+                    dispatch({ type: 'SET_MFA_PENDING', payload: null });
+                    dispatch({ type: 'SET_MFA_REQUIRED', payload: false });
                     setOtp(['', '', '', '', '', '']);
                     setOtpMessage('');
                     setError('');

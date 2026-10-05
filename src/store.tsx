@@ -2,6 +2,7 @@ import { createContext, useContext, useReducer, useEffect, useRef, type ReactNod
 import {
   supabase,
   fetchProfile,
+  mfaStepUpRequired,
   fetchTrainingPrograms,
   fetchTrainingApplications,
   fetchPartnerApplications,
@@ -171,9 +172,36 @@ export interface ContactMessage {
   read: boolean;
 }
 
+/**
+ * A step-up in progress: the password step succeeded and a TOTP challenge is
+ * open, but the session is still only aal1.
+ *
+ * This lives in the store rather than in Login's local state because
+ * LoginRoute wraps <Login /> and redirects as soon as `currentUser` is set.
+ * Supabase's signInWithPassword AWAITS its onAuthStateChange callbacks, and our
+ * callback awaits fetchProfile() before dispatching SET_CURRENT_USER — so by
+ * the time `await signIn()` resolves, the user is already in the store. Any
+ * state kept inside <Login /> is destroyed by that redirect before the OTP
+ * screen can render. LoginRoute needs to see this flag to hold the redirect.
+ */
+export interface PendingMfa {
+  factorId: string;
+  challengeId: string;
+}
+
 export interface AppState {
   currentUser: User | null;
   authReady: boolean;          // true once the initial Supabase session check is done
+  /**
+   * Does the *current session* still owe a second factor? Resolved from the
+   * server (see resolveStepUp) and true for staff who have a verified TOTP
+   * factor but are only at aal1. Route guards treat this as "not signed in":
+   * it is what stops a stored aal1 session from being waved into a portal by a
+   * plain page reload, which would otherwise bypass the OTP screen entirely.
+   */
+  mfaRequired: boolean;
+  /** Non-null once a TOTP challenge is open — see PendingMfa above. */
+  mfaPending: PendingMfa | null;
   users: User[];
   bookings: Booking[];
   notifications: Notification[];
@@ -498,6 +526,8 @@ const TRAINING_PROGRAMS: TrainingProgram[] = [
 const INITIAL_STATE: AppState = {
   currentUser: null,
   authReady: false,
+  mfaRequired: false,
+  mfaPending: null,
   users: [],
   bookings: [],
   notifications: [],
@@ -513,7 +543,15 @@ type Action =
   | { type: 'LOGIN'; payload: User }
   | { type: 'LOGOUT' }
   | { type: 'REGISTER'; payload: User }
-  | { type: 'SET_CURRENT_USER'; payload: User | null }
+  /**
+   * The single entry point for "we have a session — is it fully authenticated?".
+   * Publishes the user and the step-up verdict in ONE action so React can never
+   * render a user without the verdict (which is what let LoginRoute redirect to
+   * the portal before the OTP screen could mount).
+   */
+  | { type: 'SET_SESSION'; payload: { user: User | null; mfaRequired: boolean } }
+  | { type: 'SET_MFA_REQUIRED'; payload: boolean }
+  | { type: 'SET_MFA_PENDING'; payload: PendingMfa | null }
   | { type: 'SET_AUTH_READY' }
   | { type: 'SET_ALL_USERS'; payload: User[] }
   | { type: 'ADD_BOOKING'; payload: Booking }
@@ -549,14 +587,30 @@ function reducer(state: AppState, action: Action): AppState {
       return action.payload;
     case 'SET_AUTH_READY':
       return { ...state, authReady: true };
-    case 'SET_CURRENT_USER':
-      return { ...state, currentUser: action.payload, authReady: true };
+    case 'SET_SESSION': {
+      const { user, mfaRequired } = action.payload;
+      return {
+        ...state,
+        currentUser: user,
+        authReady: true,
+        // Signed out, or nothing owed -> no challenge can still be open.
+        // This also self-heals after a successful verify: Supabase fires
+        // MFA_CHALLENGE_VERIFIED, resolveStepUp() now sees aal2, and the stale
+        // challenge id is dropped without any explicit cleanup call.
+        mfaRequired: user ? mfaRequired : false,
+        mfaPending: user && mfaRequired ? state.mfaPending : null,
+      };
+    }
+    case 'SET_MFA_REQUIRED':
+      return { ...state, mfaRequired: action.payload };
+    case 'SET_MFA_PENDING':
+      return { ...state, mfaPending: action.payload };
     case 'SET_ALL_USERS':
       return { ...state, users: action.payload };
     case 'LOGIN':
       return { ...state, currentUser: action.payload, authReady: true };
     case 'LOGOUT':
-      return { ...state, currentUser: null, authReady: true };
+      return { ...state, currentUser: null, authReady: true, mfaPending: null };
     case 'REGISTER': {
       const newState = { ...state, users: [...state.users, action.payload], currentUser: action.payload };
       return newState;
@@ -657,29 +711,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
 
   useEffect(() => {
-    // 1. Check for an existing session immediately (e.g. page reload)
+    // Tracks the last user we resolved, so the boot path (getSession) and the
+    // INITIAL_SESSION notification don't both publish the same session.
+    let lastResolvedUserId: string | null = null;
+
+    /**
+     * Does this session still owe a second factor?
+     *
+     * Only staff can hold a TOTP factor (MfaSettings lives in the staff
+     * portals), so customers skip the round trip entirely.
+     *
+     * Fails CLOSED: if the check errors we cannot tell whether a factor is
+     * owed, so we answer "required" and let the OTP screen refuse the session
+     * rather than waving it into a portal.
+     */
+    async function resolveStepUp(profile: ProfileRow | null): Promise<boolean> {
+      if (!profile) return false;
+      const isStaff =
+        profile.role === 'admin' || profile.role === 'partner' || profile.role === 'cleaner';
+      if (!isStaff) return false;
+
+      const { required, error } = await mfaStepUpRequired();
+      if (error) {
+        console.error('[MFA] could not resolve step-up requirement:', error.message);
+        return true;
+      }
+      return required;
+    }
+
+    /**
+     * Publish a session together with its step-up verdict, in one action.
+     * The guards must never see a user without the verdict — that gap is
+     * exactly what let LoginRoute redirect to the portal before the OTP
+     * screen could mount.
+     */
+    async function publishSession(userId: string, force = false) {
+      if (!force && userId === lastResolvedUserId) return;
+      lastResolvedUserId = userId;
+
+      const profile = await fetchProfile(userId);
+      const user = profile ? profileToUser(profile) : null;
+      const mfaRequired = await resolveStepUp(profile);
+      dispatch({ type: 'SET_SESSION', payload: { user, mfaRequired } });
+    }
+
+    // 1. Check for an existing session immediately (e.g. page reload).
+    //    This is the path that closes the reload bypass: a stored aal1 session
+    //    is re-verified and held at /login instead of being trusted outright.
     supabase?.auth.getSession().then(async ({ data }) => {
       if (data.session?.user) {
-        const profile = await fetchProfile(data.session.user.id);
-        dispatch({
-          type: 'SET_CURRENT_USER',
-          payload: profile ? profileToUser(profile) : null,
-        });
+        await publishSession(data.session.user.id);
       } else {
         dispatch({ type: 'SET_AUTH_READY' });
       }
     });
 
-    // 2. Subscribe to future auth changes (login, logout, token refresh)
+    // 2. Subscribe to future auth changes (login, logout, token refresh).
+    //    Supabase AWAITS this callback inside signInWithPassword, so by the
+    //    time `await signIn()` resolves the store is already settled — which is
+    //    what lets Login stop guessing where the step-up ended up.
     const { data: listener } = supabase?.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        const profile = await fetchProfile(session.user.id);
-        dispatch({
-          type: 'SET_CURRENT_USER',
-          payload: profile ? profileToUser(profile) : null,
-        });
+        // Re-resolve after a code is accepted: the token has moved to aal2 and
+        // the stale challenge id must be dropped.
+        await publishSession(session.user.id, event === 'MFA_CHALLENGE_VERIFIED');
       } else {
-        dispatch({ type: 'SET_CURRENT_USER', payload: null });
+        lastResolvedUserId = null;
+        dispatch({ type: 'SET_SESSION', payload: { user: null, mfaRequired: false } });
       }
     }) ?? { data: null };
 
@@ -782,6 +880,23 @@ export function useCurrentUser() {
 
 export function useAuthReady() {
   return useStore().state.authReady;
+}
+
+/**
+ * True when the current session still owes a second factor. Route guards must
+ * treat this as "not signed in": the password was accepted, but the session is
+ * only aal1 and must not reach a portal.
+ */
+export function useMfaRequired() {
+  return useStore().state.mfaRequired;
+}
+
+/**
+ * Non-null once a TOTP challenge is open. Route guards must treat a pending
+ * step-up as "not yet signed in" — the session exists but is only aal1.
+ */
+export function useMfaPending() {
+  return useStore().state.mfaPending;
 }
 
 export function useNotifications(userId: string | undefined) {

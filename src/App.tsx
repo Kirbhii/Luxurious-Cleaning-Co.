@@ -1,6 +1,6 @@
 import { useLayoutEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from 'react-router-dom';
-import { AppProvider, useCurrentUser, useAuthReady } from './store';
+import { AppProvider, useCurrentUser, useAuthReady, useMfaPending, useMfaRequired } from './store';
 import { signOut } from './lib/supabase';
 import { ToastProvider } from './components/ToastContainer';
 import Navbar from './components/Navbar';
@@ -48,6 +48,8 @@ function ScrollToTop() {
 function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: string }) {
   const user = useCurrentUser();
   const authReady = useAuthReady();
+  const mfaRequired = useMfaRequired();
+  const mfaPending = useMfaPending();
 
   if (!authReady) {
     return (
@@ -57,6 +59,10 @@ function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: 
     );
   }
 
+  // The session is only aal1 — the password was accepted but the second factor
+  // has not been given. Treat it as not signed in, so neither a direct
+  // navigation nor a page reload can reach a portal without the OTP screen.
+  if (mfaRequired || mfaPending) return <Navigate to="/login" replace />;
   if (!user) return <Navigate to="/login" replace />;
   if (role && user.role !== role) return <Navigate to="/" replace />;
   return <>{children}</>;
@@ -117,6 +123,8 @@ function AppRoutes() {
 function LoginRoute() {
   const user = useCurrentUser();
   const authReady = useAuthReady();
+  const mfaRequired = useMfaRequired();
+  const mfaPending = useMfaPending();
   const [searchParams] = useSearchParams();
 
   if (!authReady) {
@@ -127,7 +135,12 @@ function LoginRoute() {
     );
   }
 
-  if (user) {
+  // A user is published together with the step-up verdict (see SET_SESSION), so
+  // this only redirects once the session is genuinely fully authenticated.
+  // Redirecting on `user` alone unmounted <Login /> mid-challenge, which is why
+  // the OTP screen never appeared, and it waved a stored aal1 session straight
+  // into the portal on reload.
+  if (user && !mfaRequired && !mfaPending) {
     const redirect = searchParams.get('redirect');
     const safeRedirect =
       redirect && redirect.startsWith('/') &&
