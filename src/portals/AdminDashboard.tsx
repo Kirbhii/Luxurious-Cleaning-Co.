@@ -118,8 +118,11 @@ export default function AdminDashboard() {
   const activeTrainees = state.trainingApplications.filter(a => a.status === 'accepted' || a.status === 'scheduled').length;
   const unreadMessages = state.contactMessages.filter(m => !m.read).length;
 
-  function handleLogout() {
-    signOut();
+  async function handleLogout() {
+    // Awaited so SIGNED_OUT lands before the local state is cleared. This
+    // portal already called signOut(), so it never hit the login bug the other
+    // three had — but the ordering was unguaranteed.
+    await signOut();
     dispatch({ type: 'LOGOUT' });
     navigate('/login');
   }

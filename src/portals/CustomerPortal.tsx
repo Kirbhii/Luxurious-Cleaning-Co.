@@ -9,7 +9,7 @@ import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, saveNotificatio
 import { useToast } from '../components/ToastContainer';
 import type { Booking } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
-import { deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid } from '../lib/supabase';
+import { signOut, deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid } from '../lib/supabase';
 import { TIER_PERKS, TIER_SUPPORT, TIER_CREDITS, TIER_DISCOUNT, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/membership';
 
 const STATUS_ORDER = [
@@ -192,7 +192,10 @@ export default function CustomerPortal() {
     return state.users.find(u => u.id === cleanerId)?.name || null;
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    // Clear the Supabase session, not just the local state — see the same note
+    // in CleanerPortal: a local-only logout breaks the NEXT sign-in.
+    await signOut();
     dispatch({ type: 'LOGOUT' });
     navigate('/login');
   }

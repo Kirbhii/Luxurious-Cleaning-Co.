@@ -710,6 +710,12 @@ export const AppContext = createContext<{
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
 
+  // Mirrors state.currentUser for the auth effect below. That effect closes over
+  // `state` once at mount, so it cannot read the live value — and the dedupe in
+  // publishSession needs it to tell "already published" from "stale id".
+  const currentUserRef = useRef<User | null>(null);
+  currentUserRef.current = state.currentUser;
+
   useEffect(() => {
     // Tracks the last user we resolved, so the boot path (getSession) and the
     // INITIAL_SESSION notification don't both publish the same session.
@@ -746,7 +752,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
      * screen could mount.
      */
     async function publishSession(userId: string, force = false) {
-      if (!force && userId === lastResolvedUserId) return;
+      // The dedupe exists so the boot path (getSession) and the INITIAL_SESSION
+      // notification don't resolve the same session twice. It must never be able
+      // to swallow a fresh sign-in, so it only skips when the store ALREADY
+      // holds this user. A matching id with no user in state means the id is
+      // stale — exactly what a logout that forgets supabase.auth.signOut()
+      // leaves behind, and what made the next login publish nothing.
+      if (!force && userId === lastResolvedUserId && currentUserRef.current?.id === userId) return;
       lastResolvedUserId = userId;
 
       const profile = await fetchProfile(userId);

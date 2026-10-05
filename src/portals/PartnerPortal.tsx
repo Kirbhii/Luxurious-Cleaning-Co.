@@ -6,7 +6,7 @@ import type { PartnerProject } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
 import PinSettings from '../components/PinSettings';
 import MfaSettings from '../components/MfaSettings';
-import { insertPartnerProject } from '../lib/supabase';
+import { insertPartnerProject, signOut } from '../lib/supabase';
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
   lead_submitted: 'Lead Submitted',
@@ -69,7 +69,10 @@ export default function PartnerPortal() {
     setForm(f => ({ ...f, [key]: val }));
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    // Clear the Supabase session, not just the local state — see the same note
+    // in CleanerPortal: a local-only logout breaks the NEXT sign-in.
+    await signOut();
     dispatch({ type: 'LOGOUT' });
     navigate('/login');
   }

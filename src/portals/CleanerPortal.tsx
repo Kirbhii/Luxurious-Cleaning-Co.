@@ -7,7 +7,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import PinPromptModal from '../components/PinPromptModal';
 import PinSettings from '../components/PinSettings';
 import MfaSettings from '../components/MfaSettings';
-import { updateBookingRow } from '../lib/supabase';
+import { signOut, updateBookingRow } from '../lib/supabase';
 
 const SAMPLE_PHOTOS = [
   'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=400&fit=crop&auto=format',
@@ -321,7 +321,15 @@ export default function CleanerPortal() {
     return state.users.find(u => u.id === customerId)?.name || 'Customer';
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    // Clear the Supabase session, not just the local state.
+    //
+    // A local-only logout left the stored session intact. SIGNED_OUT therefore
+    // never fired, so the store's resolved-user id was never reset — and the
+    // NEXT login published nothing: the password was accepted, "Welcome back!"
+    // appeared, and the user was left on /login with no portal and no OTP.
+    // A reload would also have signed them straight back in.
+    await signOut();
     dispatch({ type: 'LOGOUT' });
     navigate('/login');
   }
