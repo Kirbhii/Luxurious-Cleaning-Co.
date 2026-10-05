@@ -476,25 +476,28 @@ export async function unverifiedTotpFactorIds(): Promise<string[]> {
 /**
  * Whether the current session still owes a second factor.
  *
- * Reads Supabase's own assurance level instead of guessing from our state:
- * `nextLevel === 'aal2'` means a verified factor exists, and a lower
- * `currentLevel` means this session has not presented it yet. So the step-up
- * can only ever fire for someone who actually enrolled — nobody gets locked out
- * by a factor they never set up.
+ * The *current* level is decoded from the access token's `aal` claim, which is
+ * trustworthy. Whether a factor *exists* is asked of the server instead of read
+ * from `nextLevel`.
+ *
+ * Do not go back to `nextLevel`. Called with no argument,
+ * `getAuthenticatorAssuranceLevel()` computes it from `session.user.factors` —
+ * the session object cached in storage, not a fresh read — so a session created
+ * before the enrollment (or a sign-in response that omits `factors`) reports no
+ * factor and the step-up is silently skipped. `listFactors()` performs a real
+ * `/user` request, so it cannot go stale.
  */
 export async function mfaStepUpRequired(): Promise<{
   required: boolean;
   factorId: string | null;
   error: { message: string } | null;
 }> {
-  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (error) return { required: false, factorId: null, error: { message: error.message } };
+  const { data: aal, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aalError) return { required: false, factorId: null, error: { message: aalError.message } };
+  if (aal?.currentLevel === 'aal2') return { required: false, factorId: null, error: null };
 
-  const needsStepUp = data?.nextLevel === 'aal2' && data?.currentLevel !== 'aal2';
-  if (!needsStepUp) return { required: false, factorId: null, error: null };
-
-  const { factorId, error: factorError } = await verifiedTotpFactor();
-  return { required: factorId !== null, factorId, error: factorError };
+  const { factorId, error } = await verifiedTotpFactor();
+  return { required: factorId !== null, factorId, error };
 }
 
 // ─── Data Helpers ────────────────────────────────────────────────────────────
