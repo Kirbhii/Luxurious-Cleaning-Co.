@@ -74,6 +74,12 @@ export default function Login() {
   const [otpMessage, setOtpMessage] = useState('');
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
 
+  // A step-up we could not START — as opposed to a code the user typed wrong,
+  // which is `otpMessage`. Rendered in place of the OTP inputs, with a retry.
+  // See the challenge effect below for why this is not `error`.
+  const [mfaSetupError, setMfaSetupError] = useState('');
+  const [mfaAttempt, setMfaAttempt] = useState(0);
+
   // Login form (no role selector - role is determined from database)
   const [loginForm, setLoginForm] = useState<LoginForm>({
     identifier: '',
@@ -100,29 +106,56 @@ export default function Login() {
   // challenge lifecycle, since only it renders the OTP screen.
   //
   // Guarded on `!pendingMfa` so it runs once per step-up, and it deliberately
-  // does not depend on anything that changes while the user types.
+  // does not depend on anything that changes while the user types. `mfaAttempt`
+  // is the one exception, and it is deliberate: bumping it is how "Try again"
+  // re-runs this effect without a reload.
   useEffect(() => {
     if (!mfaRequired || pendingMfa) return;
 
     let cancelled = false;
+    setMfaSetupError('');
     (async () => {
       const { factorId, error: factorError } = await verifiedTotpFactor();
       if (cancelled) return;
 
-      // Fail closed. A factor is owed but we cannot reach it, so abandon the
-      // aal1 session rather than leaving a live one behind a screen that can
-      // never be satisfied.
-      if (factorError || !factorId) {
-        await signOut();
-        setError('Could not start two-factor authentication. Please sign in again.');
+      // Fail closed for ADMISSION, never by EJECTING the session.
+      //
+      // `listFactors()` is a network call — it awaits getUser(), i.e.
+      // GET /auth/v1/user. A transient blip there is indistinguishable from
+      // "this account has no factor" unless we read the error, and answering it
+      // with signOut() turned one blip into an unrecoverable loop: sign in →
+      // step-up owed → lookup fails → signed out → sign in. So keep the aal1
+      // session (harmless — the gate still refuses to route it to a portal) and
+      // offer a retry instead.
+      //
+      // This also fixes a second, quieter bug: the old code reported the
+      // failure through `error`, which the OTP screen never renders (it returns
+      // early). The message was only visible AFTER signOut() dropped the user
+      // back onto the main layout — which is exactly why the symptom was
+      // "login screen, no OTP inputs, red text".
+      if (factorError) {
+        setMfaSetupError(
+          'We could not reach the authentication service. Check your connection and try again.'
+        );
+        return;
+      }
+      if (!factorId) {
+        // The lookup succeeded and there is genuinely no verified authenticator,
+        // yet the gate says aal2 is owed. In practice that is the fail-closed
+        // answer to a transient error resolving inconsistently, so it stays
+        // retryable rather than becoming a hard stop.
+        setMfaSetupError(
+          'No verified authenticator is attached to this account. Try again, or ask an administrator to reset your two-factor settings.'
+        );
         return;
       }
 
       const { data: challenge, error: challengeError } = await challengeAdminMfa(factorId);
       if (cancelled) return;
       if (challengeError || !challenge) {
-        await signOut();
-        setError('Could not start two-factor authentication. Please sign in again.');
+        setMfaSetupError(
+          'We could not start the authentication challenge. Check your connection and try again.'
+        );
         return;
       }
 
@@ -132,7 +165,7 @@ export default function Login() {
     })();
 
     return () => { cancelled = true; };
-  }, [mfaRequired, pendingMfa, dispatch]);
+  }, [mfaRequired, pendingMfa, dispatch, mfaAttempt]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   function portalFor(role: UserRole) {
@@ -459,9 +492,45 @@ export default function Login() {
           )}
 
           {preparingMfa && (
-            <p className="mt-8 text-sm text-cream-300 animate-pulse">
-              Preparing your authenticator challenge…
-            </p>
+            mfaSetupError ? (
+              <>
+                <p className="mx-auto mt-8 max-w-sm text-sm leading-relaxed text-red-300">
+                  {mfaSetupError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setMfaAttempt(n => n + 1)}
+                  className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-8 py-3 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300"
+                >
+                  Try again <ArrowRight size={14} />
+                </button>
+                <div className="mt-7 border-t border-gold-400/10 pt-5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      // The password step already produced a valid aal1 session,
+                      // and walking away from the second factor must not leave it
+                      // alive. This is now the ONLY place a step-up failure ends
+                      // the session — and only because the user chose to leave.
+                      await signOut();
+                      dispatch({ type: 'SET_MFA_PENDING', payload: null });
+                      dispatch({ type: 'SET_MFA_REQUIRED', payload: false });
+                      setMfaSetupError('');
+                      setOtp(['', '', '', '', '', '']);
+                      setOtpMessage('');
+                      setError('');
+                    }}
+                    className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
+                  >
+                    ← Back to sign in
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="mt-8 text-sm text-cream-300 animate-pulse">
+                Preparing your authenticator challenge…
+              </p>
+            )
           )}
 
           {pendingMfa !== null && (
