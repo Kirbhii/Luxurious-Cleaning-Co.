@@ -67,6 +67,9 @@ export default function MfaSettings() {
   const copy = ROLE_COPY[useCurrentUser()?.role ?? 'admin'];
   const [loading, setLoading] = useState(true);
   const [factorId, setFactorId] = useState<string | null>(null);
+  // True when the last lookup failed. Deliberately NOT the same as "off" — see
+  // refresh() below for why the difference is load-bearing.
+  const [lookupFailed, setLookupFailed] = useState(false);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -74,11 +77,31 @@ export default function MfaSettings() {
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
 
-  const refresh = useCallback(async () => {
+  /**
+   * Read this account's verified factor back from the server.
+   *
+   * `verifiedTotpFactor()` is a network call — it goes through `getUser()`. That
+   * makes "we could not check" and "there is no factor" two different answers,
+   * and conflating them is how a panel ends up asserting a security state it
+   * never observed. Reporting "Off" for a failed lookup is a false negative on
+   * the account's protection, and it is exactly what makes a working enrollment
+   * look like it never happened.
+   *
+   * So on failure we keep the last known `factorId` and flag the uncertainty
+   * instead of overwriting it with null. Returns the id (or null when there
+   * genuinely is none) plus whether the read itself failed, so callers can
+   * refuse to claim either state.
+   */
+  const refresh = useCallback(async (): Promise<{ id: string | null; failed: boolean }> => {
     const { factorId: id, error: err } = await verifiedTotpFactor();
-    if (err) setError(err.message);
-    setFactorId(id);
     setLoading(false);
+    if (err) {
+      setLookupFailed(true);
+      return { id: null, failed: true };
+    }
+    setLookupFailed(false);
+    setFactorId(id);
+    return { id, failed: false };
   }, []);
 
   useEffect(() => {
@@ -121,6 +144,7 @@ export default function MfaSettings() {
     }
 
     setError(null);
+    setSuccess(null);
     setBusy(true);
     try {
       const { data: challenge, error: challengeError } = await challengeAdminMfa(enrollment.factorId);
@@ -137,8 +161,27 @@ export default function MfaSettings() {
 
       setEnrollment(null);
       setCode('');
+
+      // `verify()` returning no error means the code was accepted — it does NOT
+      // prove the factor is now `verified`. Read it back before saying so. If it
+      // is not there, the user has to find out NOW, while the QR is still in
+      // front of them, rather than on their next sign-in when no code is asked
+      // for and the panel quietly reads Off.
+      const { id, failed } = await refresh();
+      if (failed) {
+        setError(
+          'Your code was accepted, but we could not confirm it was saved. Reload the page to check.'
+        );
+        return;
+      }
+      if (!id) {
+        setError(
+          'Your authenticator was not saved. Please set it up again — until this panel reads On, your account still opens with a password alone.'
+        );
+        return;
+      }
+
       setSuccess('Two-factor authentication is on. You will be asked for a code each time you sign in.');
-      await refresh();
     } finally {
       setBusy(false);
     }
@@ -165,8 +208,23 @@ export default function MfaSettings() {
         return;
       }
       setConfirmDisable(false);
+
+      // The same rule in reverse: do not announce "off" until the server agrees.
+      // Saying it was removed when it is still there would leave the user
+      // believing a control is gone when it is not.
+      const { id, failed } = await refresh();
+      if (failed) {
+        setError(
+          'Two-factor authentication was removed, but we could not confirm it. Reload the page to check.'
+        );
+        return;
+      }
+      if (id) {
+        setError('Two-factor authentication is still on. Please try again.');
+        return;
+      }
+
       setSuccess('Two-factor authentication is off. Sign-in will only ask for your password again.');
-      await refresh();
     } finally {
       setBusy(false);
     }
@@ -203,7 +261,9 @@ export default function MfaSettings() {
             <p className="text-xs text-cream-300 mt-1">
               {factorId
                 ? 'On. A password alone can no longer open this account.'
-                : 'Off. Your password is the only thing standing between anyone and this account.'}
+                : lookupFailed
+                  ? 'Unknown. We could not check your two-factor settings just now.'
+                  : 'Off. Your password is the only thing standing between anyone and this account.'}
             </p>
           </div>
         </div>
@@ -335,8 +395,35 @@ export default function MfaSettings() {
           </div>
         )}
 
+        {/* ── Could not check ──────────────────────────────────────────────── */}
+        {/* Shown instead of "Not set up" when the lookup failed. Offering a
+            setup button here would invite the user to enroll a second factor
+            because we could not read the first one. */}
+        {!enrollment && !factorId && lookupFailed && (
+          <div className="space-y-4">
+            <p className="text-sm text-cream-300 leading-relaxed">
+              We could not reach the authentication service, so we cannot tell whether
+              two-factor authentication is on for this account. Your settings have not been
+              changed.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setLoading(true);
+                void refresh();
+              }}
+              disabled={busy}
+              className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+            >
+              <ShieldAlert size={14} />
+              Check again
+            </button>
+          </div>
+        )}
+
         {/* ── Not set up ───────────────────────────────────────────────────── */}
-        {!enrollment && !factorId && (
+        {!enrollment && !factorId && !lookupFailed && (
           <div className="space-y-4">
             <p className="text-sm text-cream-300 leading-relaxed">
               Add a second step to signing in. After your password, the portal will ask for a
