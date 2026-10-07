@@ -397,8 +397,9 @@ export default function CleanerPortal() {
         <div className="space-y-5">
           {tab === 'security' ? (
             <>
-              <PinSettings />
+              {/* MFA before PIN — account-level control above the action-level one. */}
               <MfaSettings />
+              <PinSettings />
             </>
           ) : tab === 'active' ? (
             active.length === 0 ? (

@@ -10,6 +10,30 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { pinLockStatus, setPin, isMissingRpc, type PinLockStatus } from '../lib/supabase';
+import { useCurrentUser, type UserRole } from '../store';
+
+/**
+ * What the PIN actually gates, per role.
+ *
+ * The panel is shared, but the answer is not. An admin's PIN guards partner
+ * approvals, role changes and deletions. A cleaner's guards exactly one thing —
+ * marking a job completed. Nothing in the partner portal is gated at all.
+ *
+ * Telling a cleaner that their PIN approves partners and changes roles describes
+ * access they do not have. That does not read as a warning; it reads as copy
+ * written for someone else, which is the fastest way to teach a user to click
+ * through the prompt without reading it. Same reasoning as MfaSettings' copy.
+ */
+const ROLE_COPY: Record<UserRole, string> = {
+  admin:
+    'Your PIN confirms sensitive actions such as approving partners, changing roles, and deleting records.',
+  cleaner:
+    'Your PIN confirms one action: marking a job as completed. That is the point the work is signed off, and it cannot be undone.',
+  partner:
+    'Nothing in the partner portal is protected by a PIN yet. You can set one now — it will be used as soon as a sensitive action needs it.',
+  customer:
+    'Your PIN confirms sensitive actions in your account.',
+};
 
 function formatCountdown(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
@@ -30,6 +54,7 @@ function formatCountdown(totalSeconds: number) {
  * attempt discovering it.
  */
 export default function PinSettings() {
+  const copy = ROLE_COPY[useCurrentUser()?.role ?? 'admin'];
   const [status, setStatus] = useState<PinLockStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState<string | null>(null);
@@ -178,8 +203,7 @@ export default function PinSettings() {
               {hasPin ? 'Change Your PIN' : 'Create Your PIN'}
             </h2>
             <p className="text-xs text-cream-300 mt-1">
-              Your PIN confirms sensitive actions such as approving partners, changing roles, and
-              deleting records.
+              {copy}
             </p>
           </div>
         </div>

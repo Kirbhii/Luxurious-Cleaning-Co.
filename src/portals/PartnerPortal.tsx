@@ -401,8 +401,9 @@ export default function PartnerPortal() {
 
         {tab === 'security' && (
           <div className="space-y-5">
-            <PinSettings />
+            {/* MFA before PIN — account-level control above the action-level one. */}
             <MfaSettings />
+            <PinSettings />
           </div>
         )}
       </div>

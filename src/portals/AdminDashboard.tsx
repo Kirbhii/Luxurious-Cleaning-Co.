@@ -1316,8 +1316,12 @@ export default function AdminDashboard() {
 
         {tab === 'security' && (
           <div className="space-y-5">
-            <PinSettings />
+            {/* MFA first, PIN second. Order is deliberate: the MFA panel is the
+                account-level control (a stolen password is useless), while the
+                PIN only guards individual actions. Putting the smaller control
+                first buried the bigger one below the fold. */}
             <MfaSettings />
+            <PinSettings />
           </div>
         )}
       </div>
