@@ -143,7 +143,12 @@ export default function AdminDashboard() {
     setTimeout(async () => {
       if (isUuid(app.id)) {
         const { error } = await updateTrainingApplicationRow(app.id, { status: 'accepted' });
-        if (error) console.error('[Admin] Training approve DB sync failed:', error.message);
+        if (error) {
+          console.error('[Admin] Training approve DB sync failed:', error.message);
+          setApplicationActionLoading(false);
+          toast.error('Could Not Approve Application', error.message);
+          return;
+        }
       }
       dispatch({ type: 'UPDATE_TRAINING_APP', payload: { ...app, status: 'accepted' } });
       const program = state.trainingPrograms.find(p => p.id === app.programId);
@@ -183,7 +188,12 @@ export default function AdminDashboard() {
         if (app) {
           if (isUuid(app.id)) {
             const { error } = await updatePartnerApplicationRow(app.id, { status: 'rejected' });
-            if (error) console.error('[Admin] Partner reject DB sync failed:', error.message);
+            if (error) {
+              console.error('[Admin] Partner reject DB sync failed:', error.message);
+              setApplicationActionLoading(false);
+              toast.error('Could Not Reject Application', error.message);
+              return;
+            }
           }
           dispatch({
             type: 'UPDATE_PARTNER_APP',
@@ -203,7 +213,12 @@ export default function AdminDashboard() {
         if (app) {
           if (isUuid(app.id)) {
             const { error } = await updateTrainingApplicationRow(app.id, { status: 'rejected' });
-            if (error) console.error('[Admin] Training reject DB sync failed:', error.message);
+            if (error) {
+              console.error('[Admin] Training reject DB sync failed:', error.message);
+              setApplicationActionLoading(false);
+              toast.error('Could Not Reject Application', error.message);
+              return;
+            }
           }
           dispatch({
             type: 'UPDATE_TRAINING_APP',
@@ -227,21 +242,31 @@ export default function AdminDashboard() {
     }, 800);
   }
 
-  function deleteBooking(bookingId: string) {
-    deleteBookingRow(bookingId).then(({ error }) => {
-      if (error) console.error('[Admin] Booking delete DB sync failed:', error.message);
-    });
+  async function deleteBooking(bookingId: string) {
+    // Persist first, then mirror locally — the rule CustomerPortal already
+    // follows. Dropping the card and firing a success toast before the write
+    // resolved told the admin a delete had happened when a blocked or failed one
+    // had not, and the row reappeared on the next reload.
+    const { error } = await deleteBookingRow(bookingId);
+    if (error) {
+      console.error('[Admin] Booking delete DB sync failed:', error.message);
+      toast.error('Could Not Delete Booking', error.message);
+      return;
+    }
     dispatch({ type: 'DELETE_BOOKING', payload: bookingId });
     toast.success('Booking Deleted', 'The booking has been removed');
   }
 
-  function updateTrainingApp(appId: string, status: TrainingApplication['status']) {
+  async function updateTrainingApp(appId: string, status: TrainingApplication['status']) {
     const app = state.trainingApplications.find(a => a.id === appId);
     if (!app) return;
     if (isUuid(app.id)) {
-      updateTrainingApplicationRow(app.id, { status }).then(({ error }) => {
-        if (error) console.error('[Admin] Training update DB sync failed:', error.message);
-      });
+      const { error } = await updateTrainingApplicationRow(app.id, { status });
+      if (error) {
+        console.error('[Admin] Training update DB sync failed:', error.message);
+        toast.error('Could Not Update Training Record', error.message);
+        return;
+      }
     }
     dispatch({ type: 'UPDATE_TRAINING_APP', payload: { ...app, status } });
     if (app.userId) {
@@ -266,15 +291,18 @@ export default function AdminDashboard() {
       title: 'Mark training completed?',
       message: `${app?.name || 'This trainee'} has finished the program duration. Their record will be marked completed and a certificate can be printed.`,
       confirmLabel: 'Complete',
-      onConfirm: () => { updateTrainingApp(appId, 'completed'); setConfirmation(null); },
+      onConfirm: () => { void updateTrainingApp(appId, 'completed'); setConfirmation(null); },
     });
   }
 
-  function deleteTrainingApp(appId: string) {
+  async function deleteTrainingApp(appId: string) {
     if (isUuid(appId)) {
-      deleteTrainingApplicationRow(appId).then(({ error }) => {
-        if (error) console.error('[Admin] Training delete DB sync failed:', error.message);
-      });
+      const { error } = await deleteTrainingApplicationRow(appId);
+      if (error) {
+        console.error('[Admin] Training delete DB sync failed:', error.message);
+        toast.error('Could Not Remove Trainee', error.message);
+        return;
+      }
     }
     dispatch({ type: 'DELETE_TRAINING_APP', payload: appId });
     toast.success('Trainee Removed', 'The training record has been removed.');
@@ -287,7 +315,7 @@ export default function AdminDashboard() {
       title: 'Remove trainee?',
       message: `${app?.name || 'This trainee'}'s training record will be permanently removed. This action cannot be undone.`,
       confirmLabel: 'Remove',
-      onConfirm: () => { deleteTrainingApp(appId); setPinGate(null); },
+      onConfirm: () => { void deleteTrainingApp(appId); setPinGate(null); },
     });
   }
 
@@ -379,7 +407,7 @@ export default function AdminDashboard() {
       title: 'Delete booking?',
       message: 'Are you sure you want to delete this booking? This action cannot be undone.',
       confirmLabel: 'Delete',
-      onConfirm: () => { deleteBooking(bookingId); setPinGate(null); },
+      onConfirm: () => { void deleteBooking(bookingId); setPinGate(null); },
     });
   }
 
@@ -507,28 +535,50 @@ export default function AdminDashboard() {
         console.error('[Admin] Company creation failed:', companyError?.message);
         return null;
       }
+      let linked = true;
       if (isUuid(app.id)) {
         const { error } = await linkPartnerApplicationCompany(app.id, company.id);
-        if (error) console.error('[Admin] Company link failed:', error.message);
+        if (error) {
+          console.error('[Admin] Company link failed:', error.message);
+          linked = false;
+        }
       }
       if (app.userId && isUuid(app.userId)) {
         const { error } = await setProfileCompany(app.userId, company.id);
-        if (error) console.error('[Admin] Profile company tag failed:', error.message);
+        if (error) {
+          console.error('[Admin] Profile company tag failed:', error.message);
+          linked = false;
+        }
       }
-      dispatch({ type: 'UPDATE_PARTNER_APP', payload: { ...app, status: 'approved', companyId: company.id } });
-      return company.id;
+      if (!linked) {
+        // Provisioning is best-effort by design — the approval still stands — but
+        // we must not mirror a companyId that was never written, or the admin sees
+        // a linked company that the partner's portal cannot resolve.
+        toast.error(
+          'Company Not Fully Linked',
+          `${app.companyName} was approved and the company record was created, but it could not be linked to the application. Retry from the Partners tab.`
+        );
+      }
+      dispatch({
+        type: 'UPDATE_PARTNER_APP',
+        payload: { ...app, status: 'approved', companyId: linked ? company.id : app.companyId },
+      });
+      return linked ? company.id : null;
     } catch (err) {
       console.error('[Admin] Company provisioning failed:', err);
       return null;
     }
   }
 
-  function updatePartnerApp(app: PartnerApplication, status: PartnerApplication['status']) {
+  async function updatePartnerApp(app: PartnerApplication, status: PartnerApplication['status']) {
     const updated = { ...app, status };
     if (isUuid(app.id)) {
-      updatePartnerApplicationRow(app.id, { status }).then(({ error }) => {
-        if (error) console.error('[Admin] Partner update DB sync failed:', error.message);
-      });
+      const { error } = await updatePartnerApplicationRow(app.id, { status });
+      if (error) {
+        console.error('[Admin] Partner update DB sync failed:', error.message);
+        toast.error('Could Not Update Application', error.message);
+        return;
+      }
     }
     dispatch({ type: 'UPDATE_PARTNER_APP', payload: updated });
     if (status === 'approved') {
@@ -574,7 +624,7 @@ export default function AdminDashboard() {
         ? `Approving "${app.companyName}" grants the partner role and creates a company record they can submit projects from.`
         : `${app.companyName}'s partnership application will be updated.`,
       confirmLabel: status === 'rejected' ? 'Reject' : 'Update',
-      onConfirm: () => { updatePartnerApp(app, status); dismiss(); },
+      onConfirm: () => { void updatePartnerApp(app, status); dismiss(); },
     };
 
     // Only APPROVAL is PIN-gated — it is the step that hands out a role and

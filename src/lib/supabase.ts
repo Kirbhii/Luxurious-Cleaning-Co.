@@ -530,12 +530,37 @@ export async function fetchNotifications(userId: string) {
 }
 
 /** Mark a single notification as read. */
+/**
+ * Build the error for a write that matched no rows.
+ *
+ * PostgREST reports success for a write that touched nothing — it has no notion
+ * of an affected-row count. Only a RETURNING clause makes that observable, and a
+ * row is matched by the WHERE clause AND the RLS policy, so without one an
+ * RLS-blocked write is indistinguishable from a successful one. That is how a
+ * delete could "succeed" while the row was still sitting there.
+ *
+ * Safe to add `.select('id')` on these tables: every policy that permits the
+ * write also permits the read (SELECT is `own or admin`, and each write is
+ * `admin`), so the RETURNING row can never be filtered out and turn a real write
+ * into a false negative.
+ */
+function noRowsError(entity: string, id: string, verb: string) {
+  return {
+    error: {
+      message: `${entity} ${id} was not ${verb} — it may already be gone, or you may not have permission.`,
+    },
+  };
+}
+
 export async function markNotificationRead(notificationId: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase.from('notifications') as any)
+  const { data, error } = await (supabase.from('notifications') as any)
     .update({ read: true })
-    .eq('id', notificationId);
-  return { error };
+    .eq('id', notificationId)
+    .select('id');
+  if (error) return { error: { message: error.message } };
+  if (!data || data.length === 0) return noRowsError('Notification', notificationId, 'marked read');
+  return { error: null };
 }
 
 /** Mark all notifications for a user as read. */
@@ -602,6 +627,9 @@ export async function approveApplicationAndCreateAccount(
 /**
  * Update application status to 'approved' or 'accepted'.
  * Call this BEFORE or AFTER creating the account.
+ *
+ * NOTE: no call sites in the app today — kept aligned with its siblings so it is
+ * not a footgun if it is ever wired up.
  */
 export async function updateApplicationStatus(
   applicationType: 'cleaner' | 'partner',
@@ -609,13 +637,18 @@ export async function updateApplicationStatus(
   status: 'approved' | 'accepted' | 'rejected'
 ) {
   const table = applicationType === 'cleaner' ? 'training_applications' : 'partner_applications';
-  
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase.from(table) as any)
-    .update({ status })
-    .eq('id', applicationId);
 
-  return { error };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.from(table) as any)
+    .update({ status })
+    .eq('id', applicationId)
+    .select('id');
+
+  if (error) return { error: { message: error.message } };
+  if (!data || data.length === 0) {
+    return noRowsError('Application', applicationId, `updated to "${status}"`);
+  }
+  return { error: null };
 }
 
 // ─── PIN Helpers (Staff: Cleaner, Admin, Partner) ────────────────────────────
@@ -911,10 +944,12 @@ export async function fetchTrainingApplications(): Promise<{ data: AppTrainingAp
 
 export async function updateTrainingApplicationRow(id: string, fields: { status: TrainingAppStatus }): Promise<{ error: { message: string } | null }> {
   try {
-    const { error } = await (supabase.from('training_applications') as any)
+    const { data, error } = await (supabase.from('training_applications') as any)
       .update(fields)
-      .eq('id', id);
+      .eq('id', id)
+      .select('id');
     if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) return noRowsError('Training application', id, 'updated');
     return { error: null };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : 'Network error' } };
@@ -923,8 +958,13 @@ export async function updateTrainingApplicationRow(id: string, fields: { status:
 
 export async function deleteTrainingApplicationRow(id: string): Promise<{ error: { message: string } | null }> {
   try {
-    const { error } = await supabase.from('training_applications').delete().eq('id', id);
+    const { data, error } = await supabase
+      .from('training_applications')
+      .delete()
+      .eq('id', id)
+      .select('id');
     if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) return noRowsError('Training application', id, 'deleted');
     return { error: null };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : 'Network error' } };
@@ -999,10 +1039,12 @@ export async function fetchPartnerApplications(): Promise<{ data: AppPartnerAppl
 
 export async function updatePartnerApplicationRow(id: string, fields: { status: ApplicationStatus }): Promise<{ error: { message: string } | null }> {
   try {
-    const { error } = await (supabase.from('partner_applications') as any)
+    const { data, error } = await (supabase.from('partner_applications') as any)
       .update(fields)
-      .eq('id', id);
+      .eq('id', id)
+      .select('id');
     if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) return noRowsError('Partner application', id, 'updated');
     return { error: null };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : 'Network error' } };
@@ -1315,10 +1357,12 @@ export async function createPartnerCompany(input: {
 
 export async function linkPartnerApplicationCompany(appId: string, companyId: string): Promise<{ error: { message: string } | null }> {
   try {
-    const { error } = await (supabase.from('partner_applications') as any)
+    const { data, error } = await (supabase.from('partner_applications') as any)
       .update({ company_id: companyId })
-      .eq('id', appId);
+      .eq('id', appId)
+      .select('id');
     if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) return noRowsError('Partner application', appId, 'linked to a company');
     return { error: null };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : 'Network error' } };
