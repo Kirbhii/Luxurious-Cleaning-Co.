@@ -493,11 +493,19 @@ export async function mfaStepUpRequired(): Promise<{
   error: { message: string } | null;
 }> {
   const { data: aal, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (aalError) return { required: false, factorId: null, error: { message: aalError.message } };
+  // `required: true` on error, not false. The error flag is the primary signal
+  // and resolveStepUp() reads it first — but this function's whole job is to
+  // decide whether to demand a second factor, so it must never hand a caller a
+  // fail-OPEN value. One that reads only `required` would otherwise let a failed
+  // lookup mean "no factor is owed".
+  if (aalError) return { required: true, factorId: null, error: { message: aalError.message } };
   if (aal?.currentLevel === 'aal2') return { required: false, factorId: null, error: null };
 
   const { factorId, error } = await verifiedTotpFactor();
-  return { required: factorId !== null, factorId, error };
+  // Same rule: a failed factor read means "we do not know", and "we do not know"
+  // must not read as "nothing is owed".
+  if (error) return { required: true, factorId: null, error };
+  return { required: factorId !== null, factorId, error: null };
 }
 
 // ─── Data Helpers ────────────────────────────────────────────────────────────
