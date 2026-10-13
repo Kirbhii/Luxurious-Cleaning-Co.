@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ShieldCheck, ShieldAlert, Loader2, Smartphone, X } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Loader2, Smartphone, X, KeyRound, Copy, Check } from 'lucide-react';
 import { useCurrentUser, type UserRole } from '../store';
 import {
   enrollAdminMfa,
@@ -8,7 +8,15 @@ import {
   unenrollMfa,
   verifiedTotpFactor,
   unverifiedTotpFactorIds,
+  mfaRecoveryStatus,
+  replaceMfaRecoveryCodes,
+  type RecoveryStatus,
 } from '../lib/supabase';
+import {
+  generateRecoveryCodes,
+  formatRecoveryCode,
+  RECOVERY_CODE_COUNT,
+} from '../lib/recoveryCodes';
 
 type Enrollment = { factorId: string; qrCode: string; secret: string };
 
@@ -77,6 +85,18 @@ export default function MfaSettings() {
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
 
+  // ── Recovery codes (migration 011) ─────────────────────────────────────────
+  // `status` is a three-way result, not a number. See mfaRecoveryStatus() for
+  // why: "the migration is not applied yet", "we could not reach the server"
+  // and "this account has no codes" are three different things, and a panel that
+  // renders all three as "0 codes" is reporting a state it never read.
+  const [recovery, setRecovery] = useState<RecoveryStatus | null>(null);
+  // The plaintext, held in memory only until the user confirms they have saved
+  // it. Never sent anywhere except back to the server for hashing.
+  const [newCodes, setNewCodes] = useState<string[] | null>(null);
+  const [codesCopied, setCodesCopied] = useState(false);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+
   /**
    * Read this account's verified factor back from the server.
    *
@@ -107,6 +127,76 @@ export default function MfaSettings() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * Read how many recovery codes this account has.
+   *
+   * Deliberately separate from refresh(): the factor lookup and the recovery
+   * lookup fail independently, and one failing must not corrupt the other's
+   * answer. Nothing here touches `factorId`.
+   */
+  const loadRecovery = useCallback(async () => {
+    setRecovery(await mfaRecoveryStatus());
+  }, []);
+
+  useEffect(() => {
+    void loadRecovery();
+  }, [loadRecovery]);
+
+  /**
+   * Mint a fresh set of codes and show them once.
+   *
+   * Called right after enrollment is confirmed — the session is aal2 at that
+   * moment, which the database requires — and from "Replace codes" in the panel.
+   * The plaintext is generated here, displayed, and then dropped from memory
+   * when the user dismisses it; only the bcrypt hashes reach the server.
+   */
+  async function mintCodes(): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const codes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
+      const { count, error: err } = await replaceMfaRecoveryCodes(codes);
+      if (err) {
+        // A 28000 here means the session is not at aal2 — which should not
+        // happen in a staff portal, but say the true thing rather than "failed".
+        if (err.code === '28000') {
+          setError(
+            'Recovery codes can only be created while two-factor authentication is verified for this session. Sign in again with your authenticator, then retry.'
+          );
+        } else if (err.code === 'PGRST202') {
+          setError('Recovery codes are not available yet on this deployment.');
+        } else {
+          setError('Could not create recovery codes. Please try again.');
+        }
+        return false;
+      }
+
+      setNewCodes(codes);
+      setCodesCopied(false);
+      setConfirmRegenerate(false);
+      // Read the count back rather than assuming it matches what we sent.
+      await loadRecovery();
+      if (typeof count === 'number' && count !== codes.length) {
+        console.warn('[MFA] recovery codes stored:', count, 'of', codes.length, 'submitted');
+      }
+      return true;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyCodes() {
+    if (!newCodes) return;
+    try {
+      await navigator.clipboard.writeText(newCodes.map(formatRecoveryCode).join('\n'));
+      setCodesCopied(true);
+    } catch {
+      // Clipboard access can be denied. The codes are on screen either way.
+      setCodesCopied(false);
+    }
+  }
 
   async function beginEnrollment() {
     setError(null);
@@ -181,7 +271,21 @@ export default function MfaSettings() {
         return;
       }
 
-      setSuccess('Two-factor authentication is on. You will be asked for a code each time you sign in.');
+      // The session is aal2 right now — the code we just verified is what put it
+      // there — and that is the only moment we are certain of it. So mint the
+      // recovery codes HERE rather than trusting the user to come back for them.
+      // Without codes, this enrollment is one lost phone away from a permanent
+      // lockout, and the panel would be telling them to safeguard nothing.
+      //
+      // A failure here does not undo the enrollment: the factor is verified and
+      // the message below says so either way.
+      const minted = await mintCodes();
+
+      setSuccess(
+        minted
+          ? 'Two-factor authentication is on. Your recovery codes are shown below — save them now, because this is the only time they are displayed.'
+          : 'Two-factor authentication is on. You will be asked for a code each time you sign in.'
+      );
     } finally {
       setBusy(false);
     }
@@ -395,6 +499,154 @@ export default function MfaSettings() {
           </div>
         )}
 
+        {/* ── Recovery codes ───────────────────────────────────────────────── */}
+        {/* Only ever shown once the account has a verified factor: recovery
+            codes for an account with no second factor protect nothing. The
+            heading is an h3 on purpose — the harness locates the two panels by
+            their h2 text, and a second h2 starting "Two-factor…" would make
+            "which panel is this?" ambiguous. */}
+        {!enrollment && factorId && recovery?.state !== 'missing' && (
+          <div className="mt-6 border-t border-gold-400/10 pt-6">
+            <div className="flex items-center gap-2.5 mb-3">
+              <KeyRound size={15} className="text-gold-400" />
+              <h3 className="text-xs font-medium text-gold-400 uppercase tracking-[0.18em]">
+                Recovery codes
+              </h3>
+            </div>
+
+            {/* ── Just minted: show once ─────────────────────────────────── */}
+            {newCodes ? (
+              <div className="rounded-lg border border-gold-400/30 bg-gold-400/5 px-4 py-4">
+                <p className="text-xs text-cream-200 leading-relaxed mb-3">
+                  Save these now. Each one works <span className="text-cream-100">once</span>, and
+                  this is the only time they are shown — we store only a hash, so we cannot show
+                  them again.
+                </p>
+
+                <ol className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {newCodes.map((c, i) => (
+                    <li
+                      key={c}
+                      className="flex items-baseline gap-2 rounded bg-navy-700 px-3 py-2"
+                    >
+                      <span className="w-4 shrink-0 text-right text-[11px] text-cream-300/70">
+                        {i + 1}
+                      </span>
+                      <code className="font-mono text-sm tracking-wider text-cream-100">
+                        {formatRecoveryCode(c)}
+                      </code>
+                    </li>
+                  ))}
+                </ol>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={copyCodes}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 px-4 py-2 text-xs font-semibold text-cream-100 transition-colors hover:bg-gold-400/10"
+                  >
+                    {codesCopied ? <Check size={13} /> : <Copy size={13} />}
+                    {codesCopied ? 'Copied' : 'Copy all'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Drop the plaintext. It has served its purpose, and
+                      // keeping it in memory only widens the window in which a
+                      // stray render or a devtools glance could expose it.
+                      setNewCodes(null);
+                      setCodesCopied(false);
+                    }}
+                    className="text-xs text-cream-300 underline transition-colors hover:text-cream-100"
+                  >
+                    I have saved them
+                  </button>
+                </div>
+              </div>
+            ) : recovery?.state === 'failed' ? (
+              /* ── We do not know — say so, offer a re-read ───────────────── */
+              <div className="space-y-3">
+                <p className="text-xs text-cream-300 leading-relaxed">
+                  We could not check your recovery codes just now. Nothing has been changed.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void loadRecovery()}
+                  disabled={busy}
+                  className="text-xs text-gold-400 underline transition-colors hover:text-gold-300 disabled:opacity-50"
+                >
+                  Check again
+                </button>
+              </div>
+            ) : confirmRegenerate ? (
+              /* ── Replacing destroys the old set — say so first ──────────── */
+              <div className="rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-4">
+                <p className="text-xs text-red-200 leading-relaxed mb-3">
+                  This replaces your current codes. Any code you saved before will stop working
+                  immediately, so only do this if you have lost them.
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void mintCodes()}
+                    disabled={busy}
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-400/40 px-4 py-2 text-xs font-semibold text-red-200 transition-colors hover:bg-red-400/15 disabled:opacity-60"
+                  >
+                    {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+                    Yes, replace them
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRegenerate(false)}
+                    disabled={busy}
+                    className="text-xs text-cream-300 transition-colors hover:text-cream-100 disabled:opacity-50"
+                  >
+                    Keep the current codes
+                  </button>
+                </div>
+              </div>
+            ) : recovery && recovery.total > 0 ? (
+              /* ── Have codes ─────────────────────────────────────────────── */
+              <div className="space-y-3">
+                <p className="text-xs text-cream-300 leading-relaxed">
+                  <span className="text-cream-100">
+                    {recovery.remaining} of {recovery.total}
+                  </span>{' '}
+                  unused.{' '}
+                  {recovery.remaining === 0
+                    ? 'You have used them all — replace them now, or a lost phone means a locked account.'
+                    : 'Keep them somewhere you can reach without your phone.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setConfirmRegenerate(true)}
+                  className="text-xs text-cream-300 underline transition-colors hover:text-cream-100"
+                >
+                  Replace recovery codes
+                </button>
+              </div>
+            ) : (
+              /* ── No codes yet ───────────────────────────────────────────── */
+              <div className="space-y-3">
+                <p className="text-xs text-cream-300 leading-relaxed">
+                  You have no recovery codes. If you lose the phone with your authenticator app,
+                  these are the only way back into this account — without them you would need an
+                  administrator to reset your two-factor settings by hand.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void mintCodes()}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+                >
+                  {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                  {busy ? 'Creating…' : 'Create recovery codes'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Could not check ──────────────────────────────────────────────── */}
         {/* Shown instead of "Not set up" when the lookup failed. Offering a
             setup button here would invite the user to enroll a second factor
@@ -453,8 +705,9 @@ export default function MfaSettings() {
             seconds.
           </li>
           <li>
-            Keep the recovery codes your authenticator app offers somewhere safe. Losing the phone
-            means losing the second factor.
+            Your recovery codes are the only way to remove a lost authenticator by yourself.
+            Save them somewhere you can reach without your phone — an authenticator app does
+            not issue them for you.
           </li>
           <li>
             The PIN on the Security tab is a separate thing — it guards individual sensitive

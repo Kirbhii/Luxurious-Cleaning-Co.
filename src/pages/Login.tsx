@@ -11,9 +11,14 @@ import {
   challengeAdminMfa,
   verifiedTotpFactor,
   signOut,
+  redeemMfaRecoveryCode,
 } from '../lib/supabase';
 import { useToast } from '../components/ToastContainer';
 import PasswordCriteria from '../components/PasswordCriteria';
+import {
+  normalizeRecoveryCode,
+  looksLikeRecoveryCode,
+} from '../lib/recoveryCodes';
 import {
   validateEmail,
   validateName,
@@ -79,6 +84,20 @@ export default function Login() {
   // See the challenge effect below for why this is not `error`.
   const [mfaSetupError, setMfaSetupError] = useState('');
   const [mfaAttempt, setMfaAttempt] = useState(0);
+
+  // ── "Lost your phone?" ──────────────────────────────────────────────────────
+  // Reached from the OTP screen, which is exactly where the problem is
+  // discovered: the password was accepted and the code cannot be produced.
+  //
+  // A recovery code is not a login credential — redeeming one removes the second
+  // factor and returns no session. So on success we sign the aal1 session out and
+  // ask for the password again. That keeps the store's step-up verdict honest
+  // (it is re-resolved from the server, not asserted by this screen) and matches
+  // the security model: password + code, in that order, every time.
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
 
   // Login form (no role selector - role is determined from database)
   const [loginForm, setLoginForm] = useState<LoginForm>({
@@ -450,6 +469,58 @@ export default function Login() {
     }
   }
 
+  // ── Redeem a recovery code ──────────────────────────────────────────────────
+  // Removes the second factor for this account so the user can sign in with the
+  // password alone and then set up a new authenticator from the Security tab.
+  async function submitRecovery() {
+    const normalized = normalizeRecoveryCode(recoveryCode);
+    if (!looksLikeRecoveryCode(normalized)) {
+      setRecoveryMessage('Enter the 10-character code you saved, in full.');
+      return;
+    }
+
+    setRecoveryBusy(true);
+    setRecoveryMessage('');
+    try {
+      // The email is taken from the session that is already open — the user
+      // proved it when the password was accepted. No need to ask again.
+      const email = state.currentUser?.email ?? '';
+      if (!email) {
+        setRecoveryMessage('We could not tell which account this is. Reload the page and try again.');
+        return;
+      }
+
+      const { ok, error: err } = await redeemMfaRecoveryCode(email, normalized);
+      if (!ok) {
+        setRecoveryMessage(err?.message ?? 'That code was not accepted.');
+        return;
+      }
+
+      // Success. The factor is gone, but this screen must not simply wave the
+      // aal1 session through — it re-resolves the step-up from the server by
+      // signing out and letting the normal sign-in path decide. Password + code
+      // is the model, so the password is asked for again.
+      await signOut();
+      dispatch({ type: 'SET_MFA_PENDING', payload: null });
+      dispatch({ type: 'SET_MFA_REQUIRED', payload: false });
+      setShowRecovery(false);
+      setRecoveryCode('');
+      setRecoveryMessage('');
+      setOtp(['', '', '', '', '', '']);
+      setOtpMessage('');
+      setMfaSetupError('');
+      setMode('login');
+      setSuccessMessage(
+        'Your authenticator has been removed. Sign in again with your password, then set up a new authenticator from the Security tab — and create a fresh set of recovery codes.'
+      );
+    } catch (err) {
+      console.error('[Recovery]', err);
+      setRecoveryMessage('Something went wrong. Please try again.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
   // ── OTP screen (MFA or email verification) ───────────────────────────────────
   // A step-up is owed but the challenge has not come back yet (e.g. right after
   // a reload of a stored aal1 session). Render the same panel with a spinner so
@@ -533,7 +604,7 @@ export default function Login() {
             )
           )}
 
-          {pendingMfa !== null && (
+          {pendingMfa !== null && !showRecovery && (
             <>
               <div className="mt-8 flex justify-center gap-1.5 sm:gap-3">
                 {otp.map((digit, index) => (
@@ -560,7 +631,14 @@ export default function Login() {
               >
                 {loading ? 'Verifying…' : <>Verify <ArrowRight size={14} /></>}
               </button>
-              <div className="mt-7 border-t border-gold-400/10 pt-5">
+              <div className="mt-7 border-t border-gold-400/10 pt-5 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowRecovery(true); setRecoveryMessage(''); setRecoveryCode(''); }}
+                  className="block w-full text-xs font-medium text-cream-300 underline transition-colors hover:text-cream-100"
+                >
+                  Lost your phone? Use a recovery code
+                </button>
                 <button
                   type="button"
                   onClick={async () => {
@@ -581,6 +659,63 @@ export default function Login() {
                   className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
                 >
                   ← Back to sign in
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── Recovery code ──────────────────────────────────────────────── */}
+          {/* The escape hatch from the lockout: the password was accepted, the
+              code cannot be produced, and without this the user can never reach
+              the Security tab that would let them turn the factor off. */}
+          {pendingMfa !== null && showRecovery && (
+            <>
+              <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-cream-300">
+                Enter one of the recovery codes you saved for{' '}
+                <span className="text-cream-100">{state.currentUser?.email ?? 'this account'}</span>.
+                Using one removes the authenticator from this account so you can sign in with your
+                password and set up a new one.
+              </p>
+
+              <div className="mt-6">
+                <input
+                  type="text"
+                  value={recoveryCode}
+                  disabled={recoveryBusy}
+                  onChange={e => { setRecoveryCode(e.target.value); setRecoveryMessage(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') void submitRecovery(); }}
+                  placeholder="XXXXX-XXXXX"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  aria-label="Recovery code"
+                  className="w-full max-w-xs rounded-lg border border-gold-400/25 bg-navy-800 px-4 py-3 text-center font-mono text-base tracking-[0.2em] text-cream-100 placeholder-cream-300/30 outline-none transition-colors focus:border-gold-400"
+                />
+              </div>
+
+              {recoveryMessage && (
+                <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-red-300">
+                  {recoveryMessage}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void submitRecovery()}
+                disabled={recoveryBusy}
+                className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-8 py-3 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300 disabled:opacity-60"
+              >
+                {recoveryBusy ? 'Checking…' : <>Use this code <ArrowRight size={14} /></>}
+              </button>
+
+              <div className="mt-7 border-t border-gold-400/10 pt-5">
+                <button
+                  type="button"
+                  onClick={() => { setShowRecovery(false); setRecoveryCode(''); setRecoveryMessage(''); }}
+                  disabled={recoveryBusy}
+                  className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300 disabled:opacity-50"
+                >
+                  ← Back to the code from my app
                 </button>
               </div>
             </>
