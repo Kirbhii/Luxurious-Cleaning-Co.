@@ -24,3 +24,8 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
+
+# Supabase CLI local state, created by `supabase link` / `functions deploy`.
+# linked-project.json holds THIS machine's project ref; committing it would
+# pin every other clone to it. Not project source.
+supabase/.temp/
