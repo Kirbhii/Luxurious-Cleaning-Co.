@@ -46,10 +46,18 @@
 --   consume_mfa_recovery_codes() burns everything, and is called only once the
 --   factor has been confirmed absent.
 --
--- ⚠ GRANT/REVOKE note (same trap as 007 §2 and 010 §7): Supabase ships
---   ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES/FUNCTIONS TO anon,
---   authenticated, service_role. REVOKE ... FROM PUBLIC does NOT remove a DIRECT
---   role grant — the roles must be named explicitly.
+-- ⚠ GRANT/REVOKE note — the trap cuts BOTH ways, and the second direction is the
+--   one that actually bit this migration:
+--     (1) Supabase ships ALTER DEFAULT PRIVILEGES ... GRANT ALL ON
+--         TABLES/FUNCTIONS TO anon, authenticated, service_role. So
+--         REVOKE ... FROM PUBLIC does NOT remove a DIRECT role grant — the roles
+--         must be named explicitly.
+--     (2) ...and conversely, naming the roles does NOT remove the grant to
+--         PUBLIC. PostgreSQL grants EXECUTE to PUBLIC by default on every new
+--         function. Both a named revoke AND `FROM PUBLIC` are required. §9 had
+--         only the first, so every function stayed anon-callable.
+--   Tables survive (1) and (2) because RLS with zero policies denies everything
+--   regardless of grants. Functions have no such backstop.
 --
 -- ⚠ auth.jwt() and the SQL Editor: the editor runs as `postgres` with no request
 --   claims, so replace_mfa_recovery_codes() raises "must be verified" there.
@@ -344,8 +352,31 @@ COMMENT ON FUNCTION public.consume_mfa_recovery_codes(UUID) IS
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 9. Function grants — name the roles, do not rely on PUBLIC
+-- 9. Function grants — name the roles, AND revoke from PUBLIC
 -- ─────────────────────────────────────────────────────────────────────────────
+-- ⚠ THE BUG THIS SECTION USED TO HAVE, and why PUBLIC is revoked separately.
+--   The first version revoked from anon/authenticated/service_role by name and
+--   stopped there. PostgreSQL grants EXECUTE to PUBLIC by DEFAULT on every new
+--   function, and a REVOKE naming a role does NOT remove a privilege that role
+--   holds THROUGH PUBLIC — effective privilege is the union of direct grants and
+--   PUBLIC. So all four functions stayed anon-callable, and
+--   consume_mfa_recovery_codes() — which has no internal auth check, because the
+--   grant was supposed to be the control — could be invoked by anyone holding
+--   the public anon key (it ships in the frontend bundle) to burn any user's
+--   recovery codes.
+--
+--   The tables did NOT leak because RLS (enabled, zero policies) denies every
+--   non-owner role regardless of grants. Functions have no RLS equivalent: for a
+--   SECURITY DEFINER function the grant IS the control. That asymmetry is why
+--   this slipped past a review that was looking at the tables.
+--
+--   PUBLIC cannot be named with format('%I') — that would emit "PUBLIC" and look
+--   for a role of that name. The revokes below are therefore literal.
+REVOKE ALL ON FUNCTION public.replace_mfa_recovery_codes(TEXT[])   FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.mfa_recovery_status()                FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.verify_mfa_recovery_code(UUID, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.consume_mfa_recovery_codes(UUID)     FROM PUBLIC;
+
 DO $$
 DECLARE
   role_name TEXT;
