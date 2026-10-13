@@ -58,6 +58,10 @@
 --         only the first, so every function stayed anon-callable.
 --   Tables survive (1) and (2) because RLS with zero policies denies everything
 --   regardless of grants. Functions have no such backstop.
+--   ⚠ Both directions are present in this schema: 007/010 did `REVOKE ... FROM
+--   PUBLIC` and did not name anon, so their functions are still anon-reachable
+--   (they refuse in-body, so not exploitable); 011 did the opposite. One rule,
+--   two ways to violate it.
 --
 -- ⚠ auth.jwt() and the SQL Editor: the editor runs as `postgres` with no request
 --   claims, so replace_mfa_recovery_codes() raises "must be verified" there.
