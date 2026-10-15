@@ -1,0 +1,6 @@
+{
+  "name": "mfa-harness",
+  "private": true,
+  "type": "commonjs",
+  "description": "Browser tests for the app. These files use require(), and they live inside a Vite project whose package.json declares type=module, which would otherwise make Node treat them as ES modules and reject require() outright. This file stops that lookup here. Do not delete it."
+}
