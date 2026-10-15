@@ -3,22 +3,26 @@ import { useNavigate, Link } from 'react-router-dom';
 import {
   Users, CalendarCheck, Briefcase, GraduationCap, MessageSquare,
   CheckCircle2, XCircle, ArrowRight, ArrowLeft, UserCog, LogOut, Trash2, Mail, Key, FileText, Award,
+  Printer, Building2,
 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, profileToUser, saveNotification } from '../store';
 import { useToast } from '../components/ToastContainer';
-import type { BookingStatus, PartnerApplication, TrainingApplication, MembershipTier, User } from '../store';
+import type { BookingStatus, PartnerApplication, TrainingApplication, MembershipTier, User, PartnerCompany, PartnerCompanyStatus } from '../store';
 import {
   signOut,
   fetchAllProfiles,
+  fetchPartnerCompanies,
   isUuid,
   updateTrainingApplicationRow,
   deleteTrainingApplicationRow,
   updatePartnerApplicationRow,
   updateBookingRow,
   deleteBookingRow,
+  deleteBookingRows,
   createPartnerCompany,
   linkPartnerApplicationCompany,
   setProfileCompany,
+  updatePartnerCompanyStatus,
   setUserRole,
   type AssignableRole,
 } from '../lib/supabase';
@@ -28,6 +32,15 @@ import { PRIORITY_LABELS, PRIORITY_COLORS, priorityRank } from '../lib/membershi
 import BookingReviewModal from '../components/BookingReviewModal';
 import ApplicationReviewModal from '../components/ApplicationReviewModal';
 import CertificateModal from '../components/CertificateModal';
+import MonthlyReportModal, {
+  baselineLabel,
+  buildReportData,
+  buildReportMetrics,
+  formatDelta,
+  metricDelta,
+  previousMonthKey,
+  previousValueFor,
+} from '../components/MonthlyReportModal';
 import ResumeLink from '../components/ResumeLink';
 import PinSettings from '../components/PinSettings';
 import MfaSettings from '../components/MfaSettings';
@@ -40,13 +53,34 @@ const USER_ROLE_FILTERS = ['all', 'admin', 'customer', 'cleaner', 'partner'] as 
 const COMPANY_STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected'] as const;
 const TRAINING_STATUS_FILTERS = ['all', 'pending', 'accepted', 'scheduled', 'completed', 'rejected'] as const;
 
+const COMPANY_LIFECYCLE_LABELS: Record<PartnerCompanyStatus, string> = {
+  active: 'Active',
+  inactive: 'Inactive',
+  terminated: 'No longer a partner',
+};
+
+const COMPANY_LIFECYCLE_COLORS: Record<PartnerCompanyStatus, string> = {
+  active: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20',
+  inactive: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+  terminated: 'text-red-400 bg-red-400/10 border-red-400/20',
+};
+
+/** 'YYYY-MM' for the current month, in the admin's own timezone. */
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export default function AdminDashboard() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
   const navigate = useNavigate();
   const toast = useToast();
-  const [tab, setTab] = useState<'overview' | 'bookings' | 'users' | 'partners' | 'training' | 'messages' | 'security'>('overview');
+  const [tab, setTab] = useState<'overview' | 'bookings' | 'users' | 'partners' | 'training' | 'messages' | 'reports' | 'security'>('overview');
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
+  // Bulk delete: the ids ticked in the Bookings tab. Cleared whenever the filter
+  // changes, so the toolbar count can never include a row that is not on screen.
+  const [selectedBookings, setSelectedBookings] = useState<string[]>([]);
   const [userRoleFilter, setUserRoleFilter] = useState<(typeof USER_ROLE_FILTERS)[number]>('all');
   const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
   const [trainingStatusFilter, setTrainingStatusFilter] = useState<(typeof TRAINING_STATUS_FILTERS)[number]>('all');
@@ -73,6 +107,8 @@ export default function AdminDashboard() {
   const [reviewingApplication, setReviewingApplication] = useState<{ id: string; type: 'partner' | 'training' } | null>(null);
   const [applicationActionLoading, setApplicationActionLoading] = useState(false);
   const [certificateApp, setCertificateApp] = useState<TrainingApplication | null>(null);
+  const [reportMonth, setReportMonth] = useState<string>(currentMonthKey);
+  const [reportOpen, setReportOpen] = useState(false);
 
   // Fetch all users on component mount
   useEffect(() => {
@@ -96,7 +132,28 @@ export default function AdminDashboard() {
   const customers = state.users.filter(u => u.role === 'customer');
   const cleaners = state.users.filter(u => u.role === 'cleaner');
   const partners = state.users.filter(u => u.role === 'partner');
+  // The Bookings tab's visible list, extracted from the JSX so the toolbar, the
+  // "select all" box and the empty-state check all read ONE list. Three copies
+  // of the same filter is how they drift apart.
+  const visibleBookings = state.bookings
+    .filter(b => {
+      if (bookingFilter === 'all') return true;
+      if (bookingFilter === 'pending') return ['pending', 'awaiting_review', 'awaiting_quote'].includes(b.status);
+      return b.status === bookingFilter;
+    })
+    .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
+
   const filteredUsers = state.users.filter(u => userRoleFilter === 'all' || u.role === userRoleFilter);
+  // Same derivation the printable report uses, so the on-screen figures and the
+  // printed ones come from one place and cannot drift.
+  const reportData = buildReportData(reportMonth, state.bookings, state.users);
+  // Monitoring needs a baseline. Every figure is read against the previous
+  // calendar month; a month holding no bookings yields no baseline, so the
+  // delta reads '—' instead of a meaningless '+42 vs an empty month'.
+  const prevReportMonth = previousMonthKey(reportMonth);
+  const prevReportData = prevReportMonth ? buildReportData(prevReportMonth, state.bookings, state.users) : null;
+  const reportMetrics = buildReportMetrics(reportData);
+  const reportBaseline = prevReportData && prevReportData.total > 0 ? baselineLabel(reportMonth, prevReportMonth) : '';
   const filteredPartnerApplications = state.partnerApplications.filter(app => {
     if (companyStatusFilter === 'all') return true;
     if (companyStatusFilter === 'pending') return app.status === 'submitted' || app.status === 'under_review';
@@ -257,6 +314,63 @@ export default function AdminDashboard() {
     toast.success('Booking Deleted', 'The booking has been removed');
   }
 
+  function toggleBookingSelected(id: string) {
+    setSelectedBookings(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  }
+
+  function toggleAllVisible() {
+    const visibleIds = visibleBookings.map(b => b.id);
+    const allTicked = visibleIds.length > 0 && visibleIds.every(id => selectedBookings.includes(id));
+    setSelectedBookings(allTicked ? [] : visibleIds);
+  }
+
+  /**
+   * Bulk delete. ONE PIN covers the whole batch — that is the point of the
+   * feature. The PIN answers "are you really doing this, now?", once per
+   * action, not once per row; ticking twenty rows and being challenged twenty
+   * times is exactly how a control teaches people to stop reading it.
+   */
+  function requestBulkDelete() {
+    const ids = [...selectedBookings];
+    if (ids.length === 0) return;
+    setPinGate({
+      title: ids.length === 1 ? 'Delete this booking?' : `Delete ${ids.length} bookings?`,
+      message:
+        `${ids.length === 1 ? 'This booking' : 'These bookings'} will be permanently removed, together with the whole timeline of each. ` +
+        `This cannot be undone. Your PIN is asked once for the whole batch.`,
+      confirmLabel: `Delete ${ids.length}`,
+      onConfirm: () => { void deleteBookings(ids); setPinGate(null); },
+    });
+  }
+
+  async function deleteBookings(ids: string[]) {
+    setBookingActionLoading(true);
+    const { deletedIds, error } = await deleteBookingRows(ids);
+    setBookingActionLoading(false);
+
+    if (error) {
+      toast.error('Could Not Delete Bookings', error.message);
+      return;
+    }
+
+    // Mirror ONLY what the database confirmed it removed. A batch can be partly
+    // refused — RLS matches per row — so the ids we asked for are not evidence.
+    deletedIds.forEach(id => dispatch({ type: 'DELETE_BOOKING', payload: id }));
+    setSelectedBookings(prev => prev.filter(id => !deletedIds.includes(id)));
+
+    if (deletedIds.length < ids.length) {
+      toast.info(
+        'Partly Deleted',
+        `${deletedIds.length} of ${ids.length} were removed. The rest were refused — reload to see the current list.`
+      );
+      return;
+    }
+    toast.success(
+      deletedIds.length === 1 ? 'Booking Deleted' : 'Bookings Deleted',
+      `${deletedIds.length} booking${deletedIds.length === 1 ? '' : 's'} removed.`
+    );
+  }
+
   async function updateTrainingApp(appId: string, status: TrainingApplication['status']) {
     const app = state.trainingApplications.find(a => a.id === appId);
     if (!app) return;
@@ -340,7 +454,7 @@ export default function AdminDashboard() {
     if (!booking) return;
 
     setBookingActionLoading(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       const updatedBooking = {
         ...booking,
         status: 'pending' as BookingStatus,
@@ -358,9 +472,19 @@ export default function AdminDashboard() {
       };
 
       dispatch({ type: 'UPDATE_BOOKING', payload: updatedBooking });
-      updateBookingRow(bookingId, { status: 'pending' }).then(({ error }) => {
-        if (error) console.error('[Admin] Booking accept DB sync failed:', error.message);
-      });
+
+      // Await the write. This used to be fire-and-forget with the failure going
+      // to the console, so `toast.success` fired whether or not the database
+      // accepted the change.
+      const { error } = await updateBookingRow(bookingId, { status: 'pending' });
+      if (error) {
+        // Put the old value back rather than leaving the screen lying.
+        dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+        toast.error('Booking Not Accepted', error.message);
+        setBookingActionLoading(false);
+        return;
+      }
+
       setReviewingBooking(null);
       setBookingActionLoading(false);
       
@@ -373,7 +497,7 @@ export default function AdminDashboard() {
     if (!booking) return;
 
     setBookingActionLoading(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       const updatedBooking = {
         ...booking,
         status: 'rejected' as BookingStatus,
@@ -391,9 +515,15 @@ export default function AdminDashboard() {
       };
 
       dispatch({ type: 'UPDATE_BOOKING', payload: updatedBooking });
-      updateBookingRow(bookingId, { status: 'rejected' }).then(({ error }) => {
-        if (error) console.error('[Admin] Booking reject DB sync failed:', error.message);
-      });
+
+      const { error } = await updateBookingRow(bookingId, { status: 'rejected' });
+      if (error) {
+        dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+        toast.error('Booking Not Rejected', error.message);
+        setBookingActionLoading(false);
+        return;
+      }
+
       setReviewingBooking(null);
       setBookingActionLoading(false);
       
@@ -429,7 +559,7 @@ export default function AdminDashboard() {
     });
   }
 
-  function updateBookingStatus(bookingId: string, newStatus: BookingStatus, cleanerId?: string) {
+  async function updateBookingStatus(bookingId: string, newStatus: BookingStatus, cleanerId?: string) {
     const booking = state.bookings.find(b => b.id === bookingId);
     if (!booking) return;
     const event = {
@@ -447,9 +577,15 @@ export default function AdminDashboard() {
       updatedAt: new Date().toISOString(),
     };
     dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-    updateBookingRow(bookingId, { status: newStatus }).then(({ error }) => {
-      if (error) console.error('[Admin] Booking status DB sync failed:', error.message);
-    });
+
+    const { error } = await updateBookingRow(bookingId, { status: newStatus });
+    if (error) {
+      // Put the old value back rather than leaving the screen lying.
+      dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+      toast.error('Status Not Updated', error.message);
+      return;
+    }
+
     void saveNotification(dispatch, {
       userId: booking.customerId,
       title: `Booking Update — ${booking.id}`,
@@ -463,11 +599,11 @@ export default function AdminDashboard() {
       title: 'Update booking status?',
       message: `This will change the booking status to ${STATUS_LABELS[newStatus]}.`,
       confirmLabel: 'Update',
-      onConfirm: () => { updateBookingStatus(bookingId, newStatus); setConfirmation(null); },
+      onConfirm: () => { void updateBookingStatus(bookingId, newStatus); setConfirmation(null); },
     });
   }
 
-  function assignCleaner(bookingId: string, cleanerId: string) {
+  async function assignCleaner(bookingId: string, cleanerId: string) {
     const booking = state.bookings.find(b => b.id === bookingId);
     if (!booking) return;
     const cleaner = state.users.find(u => u.id === cleanerId);
@@ -486,12 +622,19 @@ export default function AdminDashboard() {
       updatedAt: new Date().toISOString(),
     };
     dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-    updateBookingRow(bookingId, {
+
+    const { error } = await updateBookingRow(bookingId, {
       status: 'cleaner_assigned',
       cleaner_id: isUuid(cleanerId) ? cleanerId : null,
-    }).then(({ error }) => {
-      if (error) console.error('[Admin] Assign cleaner DB sync failed:', error.message);
     });
+    if (error) {
+      // Put the old value back rather than leaving the screen lying — and do not
+      // notify anyone about an assignment the database refused.
+      dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+      toast.error('Cleaner Not Assigned', error.message);
+      return;
+    }
+
     void saveNotification(dispatch, {
       userId: booking.customerId,
       title: `Cleaner Assigned — ${booking.id}`,
@@ -514,7 +657,7 @@ export default function AdminDashboard() {
       title: 'Assign cleaner?',
       message: `${cleaner?.name || 'This cleaner'} will be assigned to the booking.`,
       confirmLabel: 'Assign',
-      onConfirm: () => { assignCleaner(bookingId, cleanerId); setConfirmation(null); },
+      onConfirm: () => { void assignCleaner(bookingId, cleanerId); setConfirmation(null); },
     });
   }
 
@@ -634,6 +777,46 @@ export default function AdminDashboard() {
     else setConfirmation(request);
   }
 
+  /** Stand a partner company down, end the partnership, or put it back.
+   *
+   *  Deliberately on ConfirmModal, not the PIN gate: every one of these is a
+   *  reversible status change, and the recorded rule (see the pinGate comment
+   *  above) keeps the PIN for irreversible actions and role handouts. */
+  function requestCompanyStatusChange(company: PartnerCompany, status: PartnerCompanyStatus) {
+    // The button says what it will DO; the pill says what the company WILL BE.
+    const actionLabel =
+      status === 'active' ? 'Reinstate' : status === 'inactive' ? 'Mark Inactive' : 'End Partnership';
+    const message =
+      status === 'active'
+        ? `"${company.name}" will be restored to active and can submit new projects again.`
+        : status === 'inactive'
+          ? `"${company.name}" will be stood down. Their existing projects and records stay on file, but they will not be able to submit new ones. This can be undone.`
+          : `The partnership with "${company.name}" will be marked as ended. Their records stay on file, and this can be undone by setting them back to Active.`;
+    setConfirmation({
+      title: `${actionLabel} — ${company.name}?`,
+      message,
+      confirmLabel: actionLabel,
+      onConfirm: () => { void changeCompanyStatus(company.id, status); setConfirmation(null); },
+    });
+  }
+
+  async function changeCompanyStatus(companyId: string, status: PartnerCompanyStatus) {
+    const { error } = await updatePartnerCompanyStatus(companyId, status);
+    if (error) {
+      toast.error('Status Update Failed', error.message);
+      return;
+    }
+    // Re-read rather than mirror the change locally: the database also stamps
+    // status_changed_at, so a mirrored copy would be a state we never read.
+    const { data } = await fetchPartnerCompanies();
+    if (data) {
+      dispatch({ type: 'SET_PARTNER_COMPANIES', payload: data });
+      toast.success('Partner Status Updated', `Marked as ${COMPANY_LIFECYCLE_LABELS[status]}.`);
+    } else {
+      toast.info('Saved, But Not Refreshed', 'The change was saved. Reload the page to see the current list.');
+    }
+  }
+
   /** Admin-only role change — this is how a trainee gets absorbed, or any user
    *  is promoted. profiles.role is frozen against client writes (migration 007),
    *  so the write goes through admin_set_user_role() from migration 008, which
@@ -739,6 +922,14 @@ export default function AdminDashboard() {
           onClose={() => setCertificateApp(null)}
         />
       )}
+      {reportOpen && (
+        <MonthlyReportModal
+          monthKey={reportMonth}
+          bookings={state.bookings}
+          users={state.users}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex items-start justify-between gap-4 mb-5">
@@ -768,6 +959,7 @@ export default function AdminDashboard() {
               { key: 'partners', label: 'Partners', count: state.partnerApplications.length },
               { key: 'training', label: 'Training', count: trainingApps },
               { key: 'messages', label: 'Messages', count: unreadMessages },
+              { key: 'reports', label: 'Reports' },
               { key: 'security', label: 'Security' },
             ].map(t => (
               <button
@@ -856,33 +1048,74 @@ export default function AdminDashboard() {
               <h2 className="font-serif text-2xl text-cream-100">All Bookings</h2>
               <div className="flex flex-wrap gap-2">
                 {(['all', 'pending', 'completed', 'cancelled'] as const).map(filter => (
-                  <button key={filter} onClick={() => setBookingFilter(filter)} className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${bookingFilter === filter ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}>
+                  <button key={filter} onClick={() => { setBookingFilter(filter); setSelectedBookings([]); }} className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${bookingFilter === filter ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}>
                     {filter}
                   </button>
                 ))}
               </div>
             </div>
+            {/* Bulk selection. The toolbar only appears once something is
+                ticked, so the ordinary single-booking flow is untouched. */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs text-cream-300">
+                <input
+                  type="checkbox"
+                  checked={visibleBookings.length > 0 && visibleBookings.every(b => selectedBookings.includes(b.id))}
+                  onChange={toggleAllVisible}
+                  aria-label="Select all bookings shown"
+                  className="h-4 w-4 accent-gold-400"
+                />
+                Select all {visibleBookings.length} shown
+              </label>
+
+              {selectedBookings.length > 0 && (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-400/25 bg-red-400/5 px-4 py-2.5">
+                  <span className="text-sm text-cream-100">
+                    <span className="font-semibold text-red-300">{selectedBookings.length}</span> selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedBookings([])}
+                    className="text-xs text-cream-300 transition-colors hover:text-cream-100"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={requestBulkDelete}
+                    disabled={bookingActionLoading}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 disabled:opacity-60"
+                  >
+                    <Trash2 size={13} /> Delete selected
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="space-y-4">
-              {state.bookings
-                .filter(b => {
-                  if (bookingFilter === 'all') return true;
-                  if (bookingFilter === 'pending') return ['pending', 'awaiting_review', 'awaiting_quote'].includes(b.status);
-                  return b.status === bookingFilter;
-                })
-                .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
+              {visibleBookings
                 .map(b => {
                 const customer = state.users.find(u => u.id === b.customerId);
                 const assignedCleaner = b.cleanerId ? state.users.find(u => u.id === b.cleanerId) : null;
                 return (
                   <div key={b.id} className="bg-navy-800 border border-gold-400/10 rounded-xl p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                      <div>
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedBookings.includes(b.id)}
+                          onChange={() => toggleBookingSelected(b.id)}
+                          aria-label={`Select booking ${b.id}`}
+                          className="mt-1 h-4 w-4 shrink-0 accent-gold-400"
+                        />
+                        <div>
                         <div className="flex items-center gap-2">
                           <span className="font-serif text-cream-100">{b.service}</span>
                           <span className="font-mono text-xs text-cream-300/60">#{b.id}</span>
                         </div>
                         <div className="text-xs text-cream-300 mt-0.5">{b.customerName || customer?.name || 'Guest'} · {b.date} at {b.time} · {b.address}</div>
                         <div className="text-xs text-cream-300/70 mt-1">{b.customerEmail || customer?.email || 'No email'} · {b.customerPhone || customer?.phone || 'No phone'}</div>
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         {(b.priority ?? 'normal') !== 'normal' && (
@@ -942,11 +1175,7 @@ export default function AdminDashboard() {
                   </div>
                 );
               })}
-              {state.bookings.filter(b => {
-                if (bookingFilter === 'all') return true;
-                if (bookingFilter === 'pending') return ['pending', 'awaiting_review', 'awaiting_quote'].includes(b.status);
-                return b.status === bookingFilter;
-              }).length === 0 && (
+              {visibleBookings.length === 0 && (
                 <div className="text-center py-12 text-cream-300">No {bookingFilter === 'all' ? '' : bookingFilter} bookings found.</div>
               )}
             </div>
@@ -1043,7 +1272,79 @@ export default function AdminDashboard() {
 
         {tab === 'partners' && (
           <div>
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
+            {/* Partner Companies — the standing roster. Applications below are
+                the intake pipeline; this is what the admin acts on afterwards. */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <h2 className="font-serif text-2xl text-cream-100">Partner Companies</h2>
+                <span className="rounded-full border border-gold-400/20 px-2.5 py-1 text-xs font-medium text-cream-300">
+                  {`${state.partnerCompanies.filter(c => c.status === 'active').length} Active`}
+                </span>
+              </div>
+            </div>
+            {state.partnerCompanies.length === 0 ? (
+              <div className="rounded-xl border border-gold-400/10 bg-navy-800 p-5 text-sm text-cream-300">
+                No partner companies yet. Approving a partnership application creates one.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {state.partnerCompanies.map(company => (
+                  <div key={company.id} className="rounded-xl border border-gold-400/10 bg-navy-800 p-5">
+                    <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Building2 size={15} className="text-gold-400" />
+                          <h3 className="font-serif text-lg text-cream-100">{company.name}</h3>
+                          <span className="rounded border border-gold-400/20 px-1.5 py-0.5 font-mono text-[10px] text-cream-300">
+                            {company.code}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-cream-300">
+                          {company.industry || 'No industry'} · {company.contactEmail || 'No email'} · {company.contactPhone || 'No phone'}
+                        </div>
+                        {company.statusChangedAt && company.status !== 'active' && (
+                          <div className="mt-1 text-xs text-cream-300/70">
+                            {COMPANY_LIFECYCLE_LABELS[company.status]} since{' '}
+                            {new Date(company.statusChangedAt).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}
+                          </div>
+                        )}
+                      </div>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${COMPANY_LIFECYCLE_COLORS[company.status]}`}>
+                        {COMPANY_LIFECYCLE_LABELS[company.status]}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {company.status !== 'active' && (
+                        <button
+                          onClick={() => requestCompanyStatusChange(company, 'active')}
+                          className="flex items-center gap-1.5 rounded-lg border border-emerald-400/30 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-400 transition-colors hover:bg-emerald-400/25"
+                        >
+                          <CheckCircle2 size={12} /> Reinstate
+                        </button>
+                      )}
+                      {company.status === 'active' && (
+                        <button
+                          onClick={() => requestCompanyStatusChange(company, 'inactive')}
+                          className="flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-400 transition-colors hover:bg-amber-400/20"
+                        >
+                          <XCircle size={12} /> Mark Inactive
+                        </button>
+                      )}
+                      {company.status !== 'terminated' && (
+                        <button
+                          onClick={() => requestCompanyStatusChange(company, 'terminated')}
+                          className="flex items-center gap-1.5 rounded-lg border border-red-400/25 bg-red-400/10 px-3 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-400/20"
+                        >
+                          <XCircle size={12} /> End Partnership
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mb-5 mt-10 flex flex-wrap items-center justify-between gap-4">
               <h2 className="font-serif text-2xl text-cream-100">Partnership Applications</h2>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Filter companies by application status">
                 {COMPANY_STATUS_FILTERS.map(status => (
@@ -1311,6 +1612,150 @@ export default function AdminDashboard() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {tab === 'reports' && (
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
+              <div>
+                <h2 className="font-serif text-2xl text-cream-100">Monthly Operations Report</h2>
+                <p className="text-xs text-cream-300 mt-1">
+                  Print-ready summary for one month. Figures below are exactly what the printout will show.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="report-month" className="text-xs text-cream-300">Month</label>
+                <input
+                  id="report-month"
+                  type="month"
+                  value={reportMonth}
+                  onChange={e => setReportMonth(e.target.value)}
+                  className="rounded-lg border border-gold-400/20 bg-navy-800 px-3 py-2 text-sm text-cream-100 focus:border-gold-400/50 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setReportOpen(true)}
+                  disabled={!reportMonth}
+                  className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2.5 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Printer size={14} /> Preview &amp; Print
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 mb-2">
+              {reportMetrics.map((metric, index) => {
+                const delta = metricDelta(metric, previousValueFor(metric, prevReportData));
+                const tone =
+                  delta.change === null || delta.change === 0
+                    ? 'text-cream-300/50'
+                    : delta.tone === 'good'
+                      ? 'text-emerald-400'
+                      : delta.tone === 'bad'
+                        ? 'text-red-400'
+                        : 'text-cream-300/70';
+                const suffix = delta.change === null || !reportBaseline ? '' : ` vs ${reportBaseline}`;
+                return (
+                  <div
+                    key={metric.key}
+                    className={`rounded-xl border border-gold-400/10 bg-navy-800 p-4${index === 0 ? ' lg:col-span-2' : ''}`}
+                  >
+                    <div className={`font-serif text-cream-100 ${index === 0 ? 'text-3xl' : 'text-2xl'}`}>
+                      {metric.unit === 'percent' ? `${metric.value}%` : metric.value}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-cream-300/70">{metric.label}</div>
+                    <div
+                      className={`mt-1.5 text-[10px] font-medium ${tone}`}
+                      title={delta.change === null ? 'No previous month with bookings to compare against' : undefined}
+                    >
+                      {formatDelta(delta, metric.unit)}{suffix}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mb-6 text-[11px] text-cream-300/50">
+              Deltas compare against the previous calendar month.
+              {reportBaseline ? ` Baseline: ${reportBaseline}.` : ' No prior month with bookings yet, so deltas read "—".'}
+            </p>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {[
+                { title: 'Bookings by service', entries: reportData.byService },
+                { title: 'Bookings by status', entries: reportData.byStatus },
+                { title: 'Bookings by city', entries: reportData.byCity },
+              ].map(panel => (
+                <div key={panel.title} className="rounded-xl border border-gold-400/10 bg-navy-800 p-5">
+                  <h3 className="mb-3 text-xs uppercase tracking-[0.16em] text-gold-400">{panel.title}</h3>
+                  {panel.entries.length === 0 ? (
+                    <div className="text-sm text-cream-300">No bookings in this period.</div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {panel.entries.map(([name, count]) => (
+                        <div key={name} className="flex items-center justify-between text-sm">
+                          <span className="text-cream-200">{name}</span>
+                          <span className="font-semibold text-cream-100">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div className="rounded-xl border border-gold-400/10 bg-navy-800 p-5">
+                <h3 className="mb-3 text-xs uppercase tracking-[0.16em] text-gold-400">Membership &amp; priority</h3>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-cream-200">Member bookings</span>
+                    <span className="font-semibold text-cream-100">{reportData.memberBookings}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-cream-200">Priority bookings</span>
+                    <span className="font-semibold text-cream-100">{reportData.priorityBookings}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-cream-200">Non-member bookings</span>
+                    <span className="font-semibold text-cream-100">{reportData.total - reportData.memberBookings}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-xl border border-gold-400/10 bg-navy-800 p-5">
+              <h3 className="mb-3 text-xs uppercase tracking-[0.16em] text-gold-400">
+                Booking detail ({reportData.rows.length})
+              </h3>
+              {reportData.rows.length === 0 ? (
+                <div className="text-sm text-cream-300">No bookings were recorded in this period.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-[0.1em] text-cream-300/70">
+                        <th className="py-2 pr-3">Date</th>
+                        <th className="py-2 pr-3">Booking</th>
+                        <th className="py-2 pr-3">Customer</th>
+                        <th className="py-2 pr-3">Service</th>
+                        <th className="py-2 pr-3">City</th>
+                        <th className="py-2 pr-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportData.rows.map(b => (
+                        <tr key={b.id} className="border-t border-gold-400/10 text-cream-200">
+                          <td className="py-2 pr-3 whitespace-nowrap">{b.date}</td>
+                          <td className="py-2 pr-3 font-mono text-[11px] text-cream-300">{b.id}</td>
+                          <td className="py-2 pr-3">{b.customerName || state.users.find(u => u.id === b.customerId)?.name || '—'}</td>
+                          <td className="py-2 pr-3">{b.service || '—'}</td>
+                          <td className="py-2 pr-3">{b.city || '—'}</td>
+                          <td className="py-2 pr-3">{STATUS_LABELS[b.status] ?? b.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

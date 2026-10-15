@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { AuthError } from '@supabase/supabase-js';
 import type { UserRole } from '../store';
 import type {
   Booking as AppBooking,
@@ -256,7 +257,36 @@ export interface Database {
 
 // ─── Client ──────────────────────────────────────────────────────────────────
 
+/** How long a sign-out request may take before it is treated as unreachable.
+ *  Deliberately short: past a few seconds the user has already concluded the
+ *  button is broken, and the local session is cleared either way. */
+const SIGNOUT_TIMEOUT_MS = 5000;
+
+/** auth-js drops the local session when a request FAILS, but not when it never
+ *  settles. Signing out over a black-holed connection therefore left the session
+ *  in storage and the button spinning forever — the user could not get out at
+ *  all, and a reload put them straight back into the portal.
+ *
+ *  Aborting turns the hang into the failure path auth-js already cleans up
+ *  after, so the session is dropped and the caller resumes.
+ *
+ *  Scoped to the logout endpoint on purpose. A blanket deadline on /auth/v1/
+ *  would also cut off token refresh, where a late answer is still useful and an
+ *  aborted one can bounce a signed-in user back to the login page. */
+const fetchWithSignOutDeadline: typeof fetch = (input, init) => {
+  const url =
+    typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  if (!url.includes('/auth/v1/logout')) return fetch(input, init);
+  const deadline = AbortSignal.timeout(SIGNOUT_TIMEOUT_MS);
+  const signal =
+    init?.signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([init.signal, deadline])
+      : deadline;
+  return fetch(input, { ...init, signal });
+};
+
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  global: { fetch: fetchWithSignOutDeadline },
   auth: {
     // Persist session in localStorage so page reloads keep the user logged in
     persistSession: true,
@@ -304,10 +334,20 @@ export async function signIn(email: string, password: string) {
   return { data, error };
 }
 
-/** Sign out the current user. */
-export async function signOut() {
+/** Sign out the current user.
+ *
+ *  Always resolves: a server that never answers can no longer trap the caller,
+ *  because the sign-out request carries a deadline (see the client above).
+ *
+ *  `serverConfirmed` is false when the session was dropped locally WITHOUT the
+ *  server revoking it. A caller must not report "signed out" as if the session
+ *  ended server-side when it only ended on this device. */
+export async function signOut(): Promise<{ error: AuthError | null; serverConfirmed: boolean }> {
   const { error } = await supabase.auth.signOut();
-  return { error };
+  // Status 0 means the request never produced a response — our own deadline
+  // firing, or a dead network. Any other status came back from the server.
+  const serverConfirmed = !error || error.status !== 0;
+  return { error, serverConfirmed };
 }
 
 /** Send a password reset email to the user. */
@@ -1294,6 +1334,42 @@ export async function deleteBookingRow(id: string): Promise<{ error: { message: 
   }
 }
 
+/**
+ * Delete several bookings in ONE request, for the admin's bulk action.
+ *
+ * `.in('id', ids).select('id')` is doing the same work here as on the single-row
+ * path, and for the same reason: PostgREST reports success for a write that
+ * matched nothing, so the RETURNING rows are the only evidence of what actually
+ * went. A batch can also be PARTLY refused — RLS matches per row — so
+ * "requested" and "deleted" are two different numbers, and only the returned
+ * ids are true. Callers must mirror `deletedIds`, never the ids they asked for.
+ *
+ * `error` is non-null only when nothing at all was deleted; a partial result
+ * comes back as a short `deletedIds` with `error: null`.
+ */
+export async function deleteBookingRows(ids: string[]): Promise<{
+  deletedIds: string[];
+  error: { message: string } | null;
+}> {
+  if (ids.length === 0) return { deletedIds: [], error: null };
+  try {
+    const { data, error } = await supabase.from('bookings').delete().in('id', ids).select('id');
+    if (error) return { deletedIds: [], error: { message: error.message } };
+    const deletedIds = ((data ?? []) as Array<{ id: string }>).map(row => row.id);
+    if (deletedIds.length === 0) {
+      return {
+        deletedIds: [],
+        error: {
+          message: `None of the ${ids.length} selected bookings were deleted — they may already be gone, or you may not have permission to delete them.`,
+        },
+      };
+    }
+    return { deletedIds, error: null };
+  } catch (err) {
+    return { deletedIds: [], error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
 // ── Contact messages ──
 
 export async function insertContactMessage(input: {
@@ -1424,7 +1500,58 @@ export interface PartnerCompanyRow {
   contact_email: string | null;
   contact_phone: string | null;
   is_active: boolean;
+  /** Added by migration 16. Absent until that migration is applied. */
+  status?: string | null;
+  status_reason?: string | null;
+  status_changed_at?: string | null;
   created_at: string;
+}
+
+export type AppPartnerCompanyStatus = 'active' | 'inactive' | 'terminated';
+
+export const PARTNER_COMPANY_STATUSES: readonly AppPartnerCompanyStatus[] = ['active', 'inactive', 'terminated'];
+
+export interface AppPartnerCompany {
+  id: string;
+  name: string;
+  code: string;
+  industry: string | null;
+  website: string | null;
+  address: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  status: AppPartnerCompanyStatus;
+  statusReason: string | null;
+  statusChangedAt: string | null;
+  createdAt: string;
+}
+
+export function partnerCompanyFromRow(row: PartnerCompanyRow): AppPartnerCompany {
+  const raw = row.status;
+  // An absent column means migration 16 has not run. Every company then sits at
+  // the schema default, which is 'active' — that is a read of the schema, not a
+  // guess. An unrecognised VALUE, by contrast, is reported as 'inactive': a
+  // company we cannot classify must never be shown as being in good standing.
+  const status: AppPartnerCompanyStatus =
+    raw === null || raw === undefined
+      ? 'active'
+      : (PARTNER_COMPANY_STATUSES as readonly string[]).includes(raw)
+        ? (raw as AppPartnerCompanyStatus)
+        : 'inactive';
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code,
+    industry: row.industry,
+    website: row.website,
+    address: row.address,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    status,
+    statusReason: row.status_reason ?? null,
+    statusChangedAt: row.status_changed_at ?? null,
+    createdAt: row.created_at,
+  };
 }
 
 export function generateCompanyCode(companyName: string): string {
@@ -1454,6 +1581,46 @@ export async function createPartnerCompany(input: {
     return { data: null, error: { message: 'Could not generate a unique company code' } };
   } catch (err) {
     return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+/** Every partner company, newest first. Admin sees all; a partner sees only its
+ *  own row, because the SELECT policy scopes it (001). */
+export async function fetchPartnerCompanies(): Promise<{ data: AppPartnerCompany[] | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await (supabase.from('partner_companies') as any)
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) return { data: null, error: { message: error.message } };
+    return { data: (data as PartnerCompanyRow[]).map(partnerCompanyFromRow), error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : 'Network error' } };
+  }
+}
+
+/** Set a partner company's lifecycle status (admin only per the RLS policy on
+ *  partner_companies). Returns a real error when nothing was written — PostgREST
+ *  answers 200 for a 0-row update, so only `.select()` (RETURNING) makes the
+ *  no-op observable. */
+export async function updatePartnerCompanyStatus(
+  companyId: string,
+  status: AppPartnerCompanyStatus,
+  reason = ''
+): Promise<{ error: { message: string } | null }> {
+  try {
+    const { data, error } = await (supabase.from('partner_companies') as any)
+      .update({
+        status,
+        status_reason: reason.trim() || null,
+        status_changed_at: new Date().toISOString(),
+      })
+      .eq('id', companyId)
+      .select('id');
+    if (error) return { error: { message: error.message } };
+    if (!data || data.length === 0) return noRowsError('Partner company', companyId, 'updated');
+    return { error: null };
+  } catch (err) {
+    return { error: { message: err instanceof Error ? err.message : 'Network error' } };
   }
 }
 

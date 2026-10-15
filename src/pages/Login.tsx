@@ -78,6 +78,11 @@ export default function Login() {
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [otpMessage, setOtpMessage] = useState('');
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
+  // Synchronous re-entrancy guard for the step-up. Auto-submit and the Enter
+  // key can both fire for the same code, and `loading` is React state — two
+  // calls in the same tick would both read the old value and POST the code
+  // twice, spending a TOTP code that can only be used once.
+  const mfaVerifyingRef = useRef(false);
 
   // A step-up we could not START — as opposed to a code the user typed wrong,
   // which is `otpMessage`. Rendered in place of the OTP inputs, with a retry.
@@ -98,6 +103,7 @@ export default function Login() {
   const [recoveryCode, setRecoveryCode] = useState('');
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState('');
+  const recoveryRef = useRef<HTMLInputElement | null>(null);
 
   // Login form (no role selector - role is determined from database)
   const [loginForm, setLoginForm] = useState<LoginForm>({
@@ -185,6 +191,20 @@ export default function Login() {
 
     return () => { cancelled = true; };
   }, [mfaRequired, pendingMfa, dispatch, mfaAttempt]);
+
+  // ── Keyboard affordances on the step-up screens ─────────────────────────────
+  // The OTP screen is a dead end without the keyboard: it has no text field to
+  // click into, so unless a box takes focus on arrival the user must aim at an
+  // empty square before they can type a single digit. Focusing the first box
+  // makes the whole screen typeable the moment it appears.
+  useEffect(() => {
+    if (pendingMfa !== null && !showRecovery) otpRefs.current[0]?.focus();
+  }, [pendingMfa, showRecovery]);
+
+  // Same reasoning for the recovery screen, which has exactly one input.
+  useEffect(() => {
+    if (showRecovery) recoveryRef.current?.focus();
+  }, [showRecovery]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   function portalFor(role: UserRole) {
@@ -416,6 +436,13 @@ export default function Login() {
   }
 
   function handleOtpKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      // Auto-submit covers the ordinary path, but Enter must also work after a
+      // paste, a correction, or any focus the user moved by hand.
+      e.preventDefault();
+      void confirmMfa();
+      return;
+    }
     if (e.key === 'Backspace' && !otp[index] && index > 0) {
       otpRefs.current[index - 1]?.focus();
     }
@@ -428,17 +455,26 @@ export default function Login() {
     const next = ['', '', '', '', '', ''];
     digits.forEach((d, i) => { next[i] = d; });
     setOtp(next);
+    setOtpMessage('');
     otpRefs.current[Math.min(digits.length, 6) - 1]?.focus();
   }
 
   // ── Confirm MFA (admin TOTP) ────────────────────────────────────────────────
+  // Typing the sixth digit deliberately does NOT submit. Filling the boxes and
+  // sending the code are two separate acts, so a mistyped digit can be corrected
+  // before anything is spent. Submission is the Verify button or the Enter key.
   async function confirmMfa() {
     if (!pendingMfa) return;
+    // Enter bypasses the disabled Verify button, so a fast double-press can fire
+    // twice. `loading` is React state — two calls in the same tick would both
+    // read the old value and POST a TOTP code that can only be used once.
+    if (mfaVerifyingRef.current) return;
     const code = otp.join('');
     if (code.length !== 6) {
       setOtpMessage('Enter the complete 6-digit code from your authenticator app.');
       return;
     }
+    mfaVerifyingRef.current = true;
     setLoading(true);
     try {
       const { error: verifyError } = await verifyAdminMfa(
@@ -465,6 +501,7 @@ export default function Login() {
       console.error('[MFA]', err);
       setOtpMessage('Verification failed. Please try again.');
     } finally {
+      mfaVerifyingRef.current = false;
       setLoading(false);
     }
   }
@@ -625,7 +662,7 @@ export default function Login() {
               {otpMessage && <p className="mt-4 text-sm text-red-300">{otpMessage}</p>}
               <button
                 type="button"
-                onClick={confirmMfa}
+                onClick={() => void confirmMfa()}
                 disabled={loading}
                 className="mt-8 inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-8 py-3 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300 disabled:opacity-60"
               >
@@ -677,8 +714,19 @@ export default function Login() {
                 password and set up a new one.
               </p>
 
+              {/* Say what is actually lost BEFORE the button, not only after. Redeeming
+                  burns the entire set — consume_mfa_recovery_codes updates every row
+                  `WHERE used_at IS NULL` — but "one of the recovery codes" reads as if
+                  the rest survive. Without this line the screen understates a
+                  destructive action, and the account is left password-only. */}
+              <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-gold-300">
+                This also cancels every other recovery code you have. After signing back in, create
+                a fresh set from the Security tab.
+              </p>
+
               <div className="mt-6">
                 <input
+                  ref={recoveryRef}
                   type="text"
                   value={recoveryCode}
                   disabled={recoveryBusy}

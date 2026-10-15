@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CheckCircle2, ArrowRight, ArrowLeft, PlusCircle, Briefcase, Bell, LogOut } from 'lucide-react';
+import { CheckCircle2, ArrowRight, ArrowLeft, PlusCircle, Briefcase, Bell, LogOut, AlertTriangle } from 'lucide-react';
 import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { PartnerProject } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
@@ -32,6 +32,19 @@ const PROJECT_STATUS_COLORS: Record<string, string> = {
 
 const PROJECT_PIPELINE = ['lead_submitted', 'received', 'contacted', 'quote', 'approved', 'scheduled', 'cleaning', 'completed'];
 
+/** Copy for the two ways a partnership can stop being active. Kept apart on
+ *  purpose: "inactive" reads as temporary, "no longer a partner" does not. */
+const STANDING_NOTICE: Record<'inactive' | 'terminated', { title: string; body: string }> = {
+  inactive: {
+    title: 'Partnership Inactive',
+    body: 'Your partnership is currently inactive, so new project submissions are paused. Existing projects and their records are unaffected. Please contact Luxurious Cleaning Co. at 0919 002 4136 to discuss reactivation.',
+  },
+  terminated: {
+    title: 'Partnership Ended',
+    body: 'Your partnership with Luxurious Cleaning Co. has ended, so new project submissions are closed. Your existing projects and records remain on file. Please contact us at 0919 002 4136 if you believe this is a mistake.',
+  },
+};
+
 export default function PartnerPortal() {
   const { state, dispatch } = useStore();
   const user = useCurrentUser()!;
@@ -53,6 +66,15 @@ export default function PartnerPortal() {
     : [];
   const myNotifications = state.notifications.filter(n => n.userId === user.id);
   const unread = myNotifications.filter(n => !n.read).length;
+
+  // The company row the admin's decision lands on. `null` when there is none to
+  // read — an approved application whose company was never linked — and in that
+  // case nothing is claimed about standing rather than assuming "active".
+  const myCompany = myApp?.companyId
+    ? state.partnerCompanies.find(c => c.id === myApp.companyId) ?? null
+    : null;
+  const standing = myCompany && myCompany.status !== 'active' ? myCompany.status : null;
+  const standingNotice = standing ? STANDING_NOTICE[standing] : null;
 
   const [form, setForm] = useState({
     name: '',
@@ -89,6 +111,9 @@ export default function PartnerPortal() {
   function handleSubmitProject(e: React.FormEvent) {
     e.preventDefault();
     if (!myApp) return;
+    // Hiding the button is presentation; this is the check that holds. A
+    // partnership the admin has stood down must not be able to open new work.
+    if (standing) return;
     setSubmitting(true);
     setTimeout(async () => {
       // Persist to the database when the application owns a company record
@@ -148,6 +173,16 @@ export default function PartnerPortal() {
     );
   }
 
+  // Submit is withdrawn while the partnership is not active — there is nothing
+  // to submit into. Defined once so the tab bar and the header button agree.
+  const tabs: Array<{ key: typeof tab; label: string; count?: number }> = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'projects', label: 'Projects', count: myProjects.length },
+    ...(standing ? [] : [{ key: 'submit' as const, label: 'Submit Project' }]),
+    { key: 'notifications', label: 'Notifications', count: unread },
+    { key: 'security', label: 'Security' },
+  ];
+
   return (
     <div className="min-h-screen bg-navy-950">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
@@ -173,7 +208,7 @@ export default function PartnerPortal() {
                 <ArrowLeft size={14} />
                 Back to Home
               </Link>
-              {myApp.status === 'approved' && (
+              {myApp.status === 'approved' && !standing && (
                 <button
                   onClick={() => setTab('submit')}
                   className="flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
@@ -205,13 +240,7 @@ export default function PartnerPortal() {
           </div>
 
           <div className="flex gap-1 border-b border-gold-400/10">
-            {[
-              { key: 'overview', label: 'Overview' },
-              { key: 'projects', label: 'Projects', count: myProjects.length },
-              { key: 'submit', label: 'Submit Project' },
-              { key: 'notifications', label: 'Notifications', count: unread },
-              { key: 'security', label: 'Security' },
-            ].map(t => (
+            {tabs.map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key as typeof tab)}
@@ -228,6 +257,15 @@ export default function PartnerPortal() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 min-h-[36rem]">
+        {standingNotice && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-400/25 bg-amber-400/5 p-5">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+            <div>
+              <h3 className="mb-1 text-sm font-semibold text-cream-100">{standingNotice.title}</h3>
+              <p className="text-sm text-cream-300">{standingNotice.body}</p>
+            </div>
+          </div>
+        )}
         {tab === 'overview' && (
           <div className="space-y-6">
             <div className="bg-navy-800 border border-gold-400/15 rounded-xl p-6">
@@ -249,7 +287,7 @@ export default function PartnerPortal() {
                 ))}
               </div>
             </div>
-            {myApp.status === 'approved' && (
+            {myApp.status === 'approved' && !standing && (
               <div className="bg-emerald-400/5 border border-emerald-400/20 rounded-xl p-5">
                 <div className="flex items-center gap-3 mb-3">
                   <CheckCircle2 size={18} className="text-emerald-400" />
@@ -274,9 +312,11 @@ export default function PartnerPortal() {
               <div className="text-center py-16">
                 <Briefcase size={32} className="text-cream-300/30 mx-auto mb-3" />
                 <div className="text-cream-300 text-sm mb-4">No projects submitted yet.</div>
-                <button onClick={() => setTab('submit')} className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors">
-                  Submit First Project <ArrowRight size={14} />
-                </button>
+                {!standing && (
+                  <button onClick={() => setTab('submit')} className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors">
+                    Submit First Project <ArrowRight size={14} />
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-5">
@@ -330,7 +370,12 @@ export default function PartnerPortal() {
 
         {tab === 'submit' && (
           <div className="max-w-2xl">
-            {myApp.status !== 'approved' ? (
+            {standingNotice ? (
+              <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-5">
+                <h3 className="mb-2 text-sm font-semibold text-cream-100">{standingNotice.title}</h3>
+                <p className="text-sm text-cream-300">{standingNotice.body}</p>
+              </div>
+            ) : myApp.status !== 'approved' ? (
               <div className="text-center py-10 text-cream-300">Your partnership must be approved before submitting projects.</div>
             ) : (
               <>

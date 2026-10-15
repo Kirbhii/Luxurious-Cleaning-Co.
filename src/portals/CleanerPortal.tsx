@@ -8,6 +8,7 @@ import PinPromptModal from '../components/PinPromptModal';
 import PinSettings from '../components/PinSettings';
 import MfaSettings from '../components/MfaSettings';
 import { signOut, updateBookingRow } from '../lib/supabase';
+import { useToast } from '../components/ToastContainer';
 
 const SAMPLE_PHOTOS = [
   'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=400&fit=crop&auto=format',
@@ -38,6 +39,7 @@ const NEXT_LABELS: Record<string, string> = {
 
 function JobCard({ booking, customerName, customerEmail, customerPhone }: { booking: Booking; customerName: string; customerEmail?: string; customerPhone?: string }) {
   const { dispatch } = useStore();
+  const toast = useToast();
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState(booking.cleanerNotes);
   const [photoType, setPhotoType] = useState<'before' | 'progress' | 'after'>('progress');
@@ -51,7 +53,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
 
   function updateStatus(newStatus: BookingStatus) {
     setSaving(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       const event = {
         id: genId('tl'),
         event: STATUS_LABELS[newStatus],
@@ -65,11 +67,23 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
         timeline: [...booking.timeline, event],
         updatedAt: new Date().toISOString(),
       };
+
+      // Show the change at once, but do not call it saved until the database
+      // agrees. This write used to be fire-and-forget with the error going to
+      // the console, so a rejected update left the screen showing a status the
+      // server had never accepted.
       dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-      updateBookingRow(booking.id, { status: newStatus }).then(({ error }) => {
-        if (error) console.error('[Cleaner] Status update DB sync failed:', error.message);
-      });
-      // Notify customer
+
+      const { error } = await updateBookingRow(booking.id, { status: newStatus });
+      if (error) {
+        // Put the old value back rather than leaving the screen lying.
+        dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+        toast.error('Status not saved', error.message);
+        setSaving(false);
+        return;
+      }
+
+      // Tell the customer only once the change is real.
       void saveNotification(dispatch, {
         userId: booking.customerId,
         title: `Booking Update — ${booking.id}`,
@@ -106,11 +120,18 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
 
   function saveNotes() {
     setSaving(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       dispatch({ type: 'UPDATE_BOOKING', payload: { ...booking, cleanerNotes: note, updatedAt: new Date().toISOString() } });
-      updateBookingRow(booking.id, { cleaner_notes: note }).then(({ error }) => {
-        if (error) console.error('[Cleaner] Notes DB sync failed:', error.message);
-      });
+
+      const { error } = await updateBookingRow(booking.id, { cleaner_notes: note });
+      if (error) {
+        // The textarea keeps `note`, so the typed text is not lost — only the
+        // claim that it was stored is withdrawn.
+        dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+        toast.error('Notes not saved', error.message);
+        setSaving(false);
+        return;
+      }
       setSaving(false);
     }, 500);
   }
@@ -126,7 +147,7 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
 
   function uploadPhoto() {
     setSaving(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       const photoUrl = SAMPLE_PHOTOS[Math.floor(Math.random() * SAMPLE_PHOTOS.length)];
       const updated: Booking = {
         ...booking,
@@ -142,14 +163,22 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
         }],
         updatedAt: new Date().toISOString(),
       };
+
       dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-      updateBookingRow(booking.id, {
+
+      const { error } = await updateBookingRow(booking.id, {
         before_photos: updated.beforePhotos,
         progress_photos: updated.progressPhotos,
         after_photos: updated.afterPhotos,
-      }).then(({ error }) => {
-        if (error) console.error('[Cleaner] Photo DB sync failed:', error.message);
       });
+      if (error) {
+        dispatch({ type: 'UPDATE_BOOKING', payload: booking });
+        toast.error('Photo not saved', error.message);
+        setSaving(false);
+        return;
+      }
+
+      // Tell the customer only once the photo is actually stored.
       void saveNotification(dispatch, {
         userId: booking.customerId,
         title: `New Photo Update — ${booking.id}`,

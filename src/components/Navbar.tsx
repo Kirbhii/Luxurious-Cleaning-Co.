@@ -37,9 +37,19 @@ export default function Navbar() {
   ) : '/login';
 
   async function handleLogout() {
-    await signOut();
+    const { serverConfirmed } = await signOut();
     dispatch({ type: 'LOGOUT' });
-    toast.success('Logged Out', 'You have been successfully signed out.');
+    if (serverConfirmed) {
+      toast.success('Logged Out', 'You have been successfully signed out.');
+    } else {
+      // The session is gone from this device, but the server never confirmed the
+      // revocation. Calling that "successfully signed out" would report a state
+      // we never read.
+      toast.warning(
+        'Signed Out on This Device',
+        'We could not reach the server, so this session may still be open elsewhere. Sign in again when you have a connection to close it.'
+      );
+    }
     navigate('/');
     setMenuOpen(false);
     setLogoutConfirm(false);

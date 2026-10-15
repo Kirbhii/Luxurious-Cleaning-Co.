@@ -6,12 +6,15 @@ import {
   fetchTrainingPrograms,
   fetchTrainingApplications,
   fetchPartnerApplications,
+  fetchPartnerCompanies,
   fetchBookingsFromDb,
   fetchNotificationsFromDb,
   fetchContactMessages,
   fetchPartnerProjects,
   insertNotification,
   type ProfileRow,
+  type AppPartnerCompany,
+  type AppPartnerCompanyStatus,
 } from './lib/supabase';
 
 export type BookingStatus =
@@ -134,6 +137,14 @@ export interface PartnerProject {
   createdAt: string;
 }
 
+/**
+ * A partner company's lifecycle, set by an admin. Defined in lib/supabase (the
+ * row mapper owns the shape) and re-exported here so components keep importing
+ * domain types from the store, as they do for every other entity.
+ */
+export type PartnerCompanyStatus = AppPartnerCompanyStatus;
+export type PartnerCompany = AppPartnerCompany;
+
 export interface TrainingProgram {
   id: string;
   name: string;
@@ -207,6 +218,7 @@ export interface AppState {
   notifications: Notification[];
   partnerApplications: PartnerApplication[];
   partnerProjects: PartnerProject[];
+  partnerCompanies: PartnerCompany[];
   trainingPrograms: TrainingProgram[];
   trainingApplications: TrainingApplication[];
   contactMessages: ContactMessage[];
@@ -533,6 +545,7 @@ const INITIAL_STATE: AppState = {
   notifications: [],
   partnerApplications: [],
   partnerProjects: [],
+  partnerCompanies: [],
   trainingPrograms: TRAINING_PROGRAMS,
   trainingApplications: [],
   contactMessages: [],
@@ -578,6 +591,8 @@ type Action =
   | { type: 'SET_NOTIFICATIONS'; payload: Notification[] }
   | { type: 'SET_CONTACT_MESSAGES'; payload: ContactMessage[] }
   | { type: 'SET_PARTNER_PROJECTS'; payload: PartnerProject[] }
+  | { type: 'SET_PARTNER_COMPANIES'; payload: PartnerCompany[] }
+  | { type: 'UPDATE_PARTNER_COMPANY'; payload: PartnerCompany }
   | { type: 'RESET_CLOUD_DATA' }
   | { type: 'LOAD'; payload: AppState };
 
@@ -655,6 +670,13 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, contactMessages: action.payload };
     case 'SET_PARTNER_PROJECTS':
       return { ...state, partnerProjects: action.payload };
+    case 'SET_PARTNER_COMPANIES':
+      return { ...state, partnerCompanies: action.payload };
+    case 'UPDATE_PARTNER_COMPANY':
+      return {
+        ...state,
+        partnerCompanies: state.partnerCompanies.map(c => c.id === action.payload.id ? action.payload : c),
+      };
     case 'RESET_CLOUD_DATA':
       return {
         ...state,
@@ -662,6 +684,7 @@ function reducer(state: AppState, action: Action): AppState {
         notifications: [],
         partnerApplications: [],
         partnerProjects: [],
+        partnerCompanies: [],
         trainingApplications: [],
         contactMessages: [],
       };
@@ -832,6 +855,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       fetchPartnerProjects().then(({ data }) => {
         if (data) dispatch({ type: 'SET_PARTNER_PROJECTS', payload: data });
+      });
+      fetchPartnerCompanies().then(({ data }) => {
+        if (data) dispatch({ type: 'SET_PARTNER_COMPANIES', payload: data });
       });
     }
     // Training programs are public — always refresh from the database

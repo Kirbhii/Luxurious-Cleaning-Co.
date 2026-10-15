@@ -84,6 +84,14 @@ export default function MfaSettings() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  // Re-authentication for the disable action — a TOTP code, deliberately NOT a
+  // password. `signInWithPassword` would hand back an aal1 token, and because the
+  // user id is unchanged the store's dedupe swallows that event, so the session
+  // would silently drop to aal1 while the app still believed it was aal2 — a
+  // control reporting a state it did not read. Verifying a code RAISES the level
+  // instead of lowering it, and a browser password manager cannot autofill it,
+  // which is the entire point of asking.
+  const [disableCode, setDisableCode] = useState('');
 
   // ── Recovery codes (migration 011) ─────────────────────────────────────────
   // `status` is a three-way result, not a number. See mfaRecoveryStatus() for
@@ -302,16 +310,36 @@ export default function MfaSettings() {
 
   async function disable() {
     if (!factorId) return;
+    if (disableCode.length !== 6) return;
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
+      // 1. Prove the device is in hand RIGHT NOW, before anything is removed.
+      //    Verifying a code lifts the token to aal2, so the session is never
+      //    weaker after this action than it was before it.
+      const { data: challenge, error: challengeError } = await challengeAdminMfa(factorId);
+      if (challengeError || !challenge) {
+        setError(challengeError?.message ?? 'Could not start the verification. Try again.');
+        return;
+      }
+      const { error: verifyError } = await verifyAdminMfa(factorId, challenge.id, disableCode);
+      if (verifyError) {
+        // Nothing has been removed at this point, and the copy says so — the
+        // user must not be left wondering whether the failure was half-applied.
+        setError('That code was not accepted. Two-factor authentication is still on.');
+        setDisableCode('');
+        return;
+      }
+
+      // 2. Only now remove it.
       const { error: err } = await unenrollMfa(factorId);
       if (err) {
         setError(err.message);
         return;
       }
       setConfirmDisable(false);
+      setDisableCode('');
 
       // The same rule in reverse: do not announce "off" until the server agrees.
       // Saying it was removed when it is still there would leave the user
@@ -467,11 +495,35 @@ export default function MfaSettings() {
                 <p className="text-xs text-red-200 leading-relaxed mb-3">
                   {copy.disableWarning}
                 </p>
+
+                {/* Re-authentication, and it is not a formality: without it this
+                    button turns off the second factor for anyone who finds an
+                    unlocked screen or steals a live session. A password prompt
+                    would not fix that — the browser's own password manager can
+                    fill it without the owner being present. */}
+                <label className="block mb-3">
+                  <span className="block text-xs font-medium text-red-200/80 mb-1.5">
+                    Enter the current 6-digit code from your app to confirm
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={disableCode}
+                    disabled={busy}
+                    onChange={e => setDisableCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    aria-label="Confirmation code"
+                    className="w-full max-w-[220px] bg-navy-700 border border-red-400/25 rounded-lg px-4 py-2.5 text-sm text-cream-100 tracking-[0.4em] placeholder-cream-300/40 placeholder:tracking-[0.4em] focus:outline-none focus:border-red-400/60 disabled:opacity-50"
+                  />
+                </label>
+
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={disable}
-                    disabled={busy}
+                    disabled={busy || disableCode.length !== 6}
                     className="inline-flex items-center gap-2 rounded-lg border border-red-400/40 px-4 py-2 text-xs font-semibold text-red-200 transition-colors hover:bg-red-400/15 disabled:opacity-60"
                   >
                     {busy ? <Loader2 size={13} className="animate-spin" /> : null}
@@ -479,7 +531,7 @@ export default function MfaSettings() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setConfirmDisable(false)}
+                    onClick={() => { setConfirmDisable(false); setDisableCode(''); setError(null); }}
                     disabled={busy}
                     className="text-xs text-cream-300 transition-colors hover:text-cream-100 disabled:opacity-50"
                   >
@@ -490,7 +542,7 @@ export default function MfaSettings() {
             ) : (
               <button
                 type="button"
-                onClick={() => setConfirmDisable(true)}
+                onClick={() => { setConfirmDisable(true); setDisableCode(''); setError(null); }}
                 className="text-xs text-cream-300 underline transition-colors hover:text-cream-100"
               >
                 Turn off two-factor authentication
