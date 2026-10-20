@@ -4,8 +4,9 @@ import { CheckCircle2, ArrowRight, ArrowLeft, PlusCircle, Briefcase, Bell, LogOu
 import { useStore, useCurrentUser, genId, saveNotification } from '../store';
 import type { PartnerProject } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
-import PinSettings from '../components/PinSettings';
-import MfaSettings from '../components/MfaSettings';
+import ThemeToggle from '../components/ThemeToggle';
+import PinSettings, { PinGuidance } from '../components/PinSettings';
+import MfaSettings, { MfaGuidance } from '../components/MfaSettings';
 import { insertPartnerProject, signOut } from '../lib/supabase';
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
@@ -160,7 +161,7 @@ export default function PartnerPortal() {
 
   if (!myApp) {
     return (
-      <div className="min-h-screen bg-navy-950 pt-16 flex items-center justify-center px-6">
+      <div className="min-h-screen bg-navy-950 portal-surface pt-16 flex items-center justify-center px-6">
         <div className="max-w-md text-center">
           <Briefcase size={40} className="text-cream-300/30 mx-auto mb-4" />
           <h2 className="font-serif text-2xl text-cream-100 mb-3">No Partnership Application</h2>
@@ -184,7 +185,7 @@ export default function PartnerPortal() {
   ];
 
   return (
-    <div className="min-h-screen bg-navy-950">
+    <div className="min-h-screen bg-navy-950 portal-surface">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-6xl mx-auto px-6 py-6">
@@ -204,7 +205,9 @@ export default function PartnerPortal() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+              {/* Theme switch, beside the other header actions. */}
+              <ThemeToggle variant="full" />
+              <Link to="/" className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2.5 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300">
                 <ArrowLeft size={14} />
                 Back to Home
               </Link>
@@ -218,7 +221,7 @@ export default function PartnerPortal() {
               )}
               <button
                 onClick={requestLogout}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
+                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-500"
               >
                 <LogOut size={14} />
                 Log out
@@ -445,10 +448,23 @@ export default function PartnerPortal() {
         )}
 
         {tab === 'security' && (
-          <div className="space-y-5">
-            {/* MFA before PIN — account-level control above the action-level one. */}
-            <MfaSettings />
-            <PinSettings />
+          <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+            {/* Actions down the left (two-factor, then the PIN), the
+                explanations down the right. The column is declared on each card
+                rather than left to source order, so each explanation sits level
+                with the control it explains. */}
+            <div className="lg:col-start-1">
+              <MfaSettings />
+            </div>
+            <div className="lg:col-start-2">
+              <MfaGuidance />
+            </div>
+            <div className="lg:col-start-1">
+              <PinSettings />
+            </div>
+            <div className="lg:col-start-2">
+              <PinGuidance />
+            </div>
           </div>
         )}
       </div>

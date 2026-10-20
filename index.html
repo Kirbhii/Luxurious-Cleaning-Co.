@@ -1,10 +1,32 @@
 <!doctype html>
-<html lang="<!-- figma:lang -->">
+<html lang="<!-- figma:lang -->" data-theme="dark">
   <head>
     <!-- figma:head-start -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title><!-- figma:title --></title>
+
+    <!--
+      Applies the saved theme before the first paint.
+
+      This has to be a plain inline script, not part of the React bundle: the
+      bundle loads after the stylesheet, so a light-theme user would see the
+      dark theme painted first and then swap — a flash on every single page
+      load. It only ever sets the attribute; dark is the CSS default, so a user
+      who has never chosen anything needs nothing done for them.
+
+      Kept in step with STORAGE_KEY in src/lib/theme.ts.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('lcc-theme');
+          document.documentElement.setAttribute('data-theme', stored === 'light' ? 'light' : 'dark');
+        } catch (e) {
+          /* Private mode or storage disabled — the markup's default applies. */
+        }
+      })();
+    </script>
     <!-- figma:head-end -->
   </head>
   <body>

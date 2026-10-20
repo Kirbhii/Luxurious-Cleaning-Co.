@@ -158,7 +158,7 @@ export default function PinSettings() {
 
   if (loading) {
     return (
-      <div className="max-w-2xl">
+      <div>
         <div className="bg-navy-800 border border-gold-400/10 rounded-2xl p-6 md:p-8 flex items-center gap-3 text-cream-300">
           <Loader2 size={18} className="animate-spin" />
           <span className="text-sm">Checking your security settings…</span>
@@ -169,7 +169,7 @@ export default function PinSettings() {
 
   if (unavailable) {
     return (
-      <div className="max-w-2xl">
+      <div>
         <div className="bg-navy-800 border border-amber-400/25 rounded-2xl p-6 md:p-8">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-amber-400/10 flex items-center justify-center">
@@ -192,7 +192,7 @@ export default function PinSettings() {
   }
 
   return (
-    <div className="max-w-2xl space-y-5">
+    <div>
       <div className="bg-navy-800 border border-gold-400/10 rounded-2xl p-6 md:p-8">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-lg bg-gold-400/10 flex items-center justify-center">
@@ -220,7 +220,7 @@ export default function PinSettings() {
             <div className="text-xs text-red-200 leading-relaxed">
               <span className="font-semibold">Too many incorrect PINs.</span> For your protection the
               PIN is locked for another{' '}
-              <span className="font-mono font-semibold">{formatCountdown(secondsLeft)}</span>. Even
+              <span className="num font-semibold">{formatCountdown(secondsLeft)}</span>. Even
               the correct PIN will be rejected until then.
             </div>
           </div>
@@ -344,25 +344,40 @@ export default function PinSettings() {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
 
-      <div className="bg-navy-800/60 border border-gold-400/10 rounded-2xl px-6 py-5">
-        <h3 className="text-xs font-medium text-gold-400 uppercase tracking-[0.18em] mb-3">
-          Choosing a PIN
-        </h3>
-        <ul className="space-y-2 text-xs text-cream-300 leading-relaxed">
-          <li>
-            <span className="text-cream-100 font-medium">Use 6 digits if you can.</span> A 4-digit PIN
-            is only 10,000 combinations. With the 5-attempt lockout, 4 digits falls in about three
-            weeks of steady guessing — 6 digits takes years.
-          </li>
-          <li>Avoid birthdays, house numbers, and repeating digits such as 111111.</li>
-          <li>
-            After five wrong PINs the PIN locks for 15 minutes, and the correct PIN is rejected too
-            until the lock lifts.
-          </li>
-          <li>Your PIN is stored hashed on the server. Nobody — including administrators — can read it.</li>
-        </ul>
-      </div>
+/**
+ * The explanatory half of the PIN panel — the "choosing a PIN" card.
+ *
+ * Split out of PinSettings for the same reason as MfaGuidance: the Security tab
+ * puts both ACTION cards in one column and both EXPLANATION cards in the other,
+ * and a parent cannot reach inside a component to do that.
+ *
+ * Static on purpose. Everything in it is a property of the PIN scheme itself
+ * (length, lockout, hashing), none of which depends on whether this account has
+ * a PIN yet — so it never has to be told a state it would only be guessing at.
+ */
+export function PinGuidance() {
+  return (
+    <div className="bg-navy-800/60 border border-gold-400/10 rounded-2xl px-6 py-5">
+      <h3 className="text-xs font-medium text-gold-400 uppercase tracking-[0.18em] mb-3">
+        Choosing a PIN
+      </h3>
+      <ul className="space-y-2 text-xs text-cream-300 leading-relaxed">
+        <li>
+          <span className="text-cream-100 font-medium">Use 6 digits if you can.</span> A 4-digit PIN
+          is only 10,000 combinations. With the 5-attempt lockout, 4 digits falls in about three
+          weeks of steady guessing — 6 digits takes years.
+        </li>
+        <li>Avoid birthdays, house numbers, and repeating digits such as 111111.</li>
+        <li>
+          After five wrong PINs the PIN locks for 15 minutes, and the correct PIN is rejected too
+          until the lock lifts.
+        </li>
+        <li>Your PIN is stored hashed on the server. Nobody — including administrators — can read it.</li>
+      </ul>
     </div>
   );
 }

@@ -256,8 +256,22 @@ export function buildMonthlyReportHtml(
 <style>
   @page { size: A4; margin: 12mm; }
   * { box-sizing: border-box; }
+  /* Formal document face, and the SAME stack the certificate uses.
+     This was 'Helvetica Neue', Arial, sans-serif. A monthly operations report is
+     a record that gets filed, printed and handed to someone — a grotesque sans
+     reads as a web page, a serif reads as a document. Georgia was chosen over a
+     webfont on purpose: this HTML is written into a new window and printed, and a
+     printout must not depend on a font finishing its download first. Georgia is
+     on every Windows and macOS machine; Times New Roman is the floor.
+     tabular-nums is set once on the body so every figure in the report — KPI
+     values, counts, the detail table — shares one digit width and the columns
+     line up without each rule having to remember.
+     NOTE: no backticks in here. This whole block is inside a JS template
+     literal, so a backtick in a comment ends the string and the file stops
+     parsing. That is how this comment broke the build once. */
   body {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: Georgia, 'Times New Roman', Times, serif;
+    font-variant-numeric: tabular-nums;
     color: #14161c;
     background: #fff;
     margin: 0;
@@ -309,7 +323,11 @@ export function buildMonthlyReportHtml(
                           border-bottom: 1px solid #c9a227; padding: 5px 4px; }
   table.detail td { padding: 4.5px 4px; border-bottom: 1px solid #f0ece0; vertical-align: top; }
   table.detail tr { break-inside: avoid; }
-  .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 8.5px; color: #4a443c; }
+  /* Booking references. The one place mono is right in a serif document: a ref
+     is read character-by-character, not as a quantity, and mono keeps O/0 and
+     I/1 apart. Same stack as the .ident class in the app, so the printed ref and
+     the on-screen ref are the same shape. */
+  .mono { font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 8.5px; color: #4a443c; }
   .st { font-weight: bold; white-space: nowrap; }
   .st-completed { color: #16794a; }
   .st-cancelled { color: #b4232a; }

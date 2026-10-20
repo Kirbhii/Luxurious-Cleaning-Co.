@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import {
   Users, CalendarCheck, Briefcase, GraduationCap, MessageSquare,
   CheckCircle2, XCircle, ArrowRight, ArrowLeft, UserCog, LogOut, Trash2, Mail, Key, FileText, Award,
-  Printer, Building2,
+  Printer, Building2, Search, X,
 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, profileToUser, saveNotification } from '../store';
 import { useToast } from '../components/ToastContainer';
@@ -27,6 +27,7 @@ import {
   type AssignableRole,
 } from '../lib/supabase';
 import ConfirmModal from '../components/ConfirmModal';
+import ThemeToggle from '../components/ThemeToggle';
 import PinPromptModal from '../components/PinPromptModal';
 import { PRIORITY_LABELS, PRIORITY_COLORS, priorityRank } from '../lib/membership';
 import BookingReviewModal from '../components/BookingReviewModal';
@@ -42,8 +43,8 @@ import MonthlyReportModal, {
   previousValueFor,
 } from '../components/MonthlyReportModal';
 import ResumeLink from '../components/ResumeLink';
-import PinSettings from '../components/PinSettings';
-import MfaSettings from '../components/MfaSettings';
+import PinSettings, { PinGuidance } from '../components/PinSettings';
+import MfaSettings, { MfaGuidance } from '../components/MfaSettings';
 
 const BOOKING_STATUSES: BookingStatus[] = [
   'pending', 'confirmed', 'cleaner_assigned', 'en_route', 'in_progress', 'completed', 'cancelled', 'awaiting_quote',
@@ -82,6 +83,7 @@ export default function AdminDashboard() {
   // changes, so the toolbar count can never include a row that is not on screen.
   const [selectedBookings, setSelectedBookings] = useState<string[]>([]);
   const [userRoleFilter, setUserRoleFilter] = useState<(typeof USER_ROLE_FILTERS)[number]>('all');
+  const [userQuery, setUserQuery] = useState('');
   const [companyStatusFilter, setCompanyStatusFilter] = useState<(typeof COMPANY_STATUS_FILTERS)[number]>('all');
   const [trainingStatusFilter, setTrainingStatusFilter] = useState<(typeof TRAINING_STATUS_FILTERS)[number]>('all');
   const [confirmation, setConfirmation] = useState<{
@@ -143,7 +145,17 @@ export default function AdminDashboard() {
     })
     .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
 
-  const filteredUsers = state.users.filter(u => userRoleFilter === 'all' || u.role === userRoleFilter);
+  // One list feeds the count, the empty state and the table — the same reason
+  // visibleBookings exists. The query matches every column the admin can see in
+  // the row, not just the name: typing an email and getting nothing back is the
+  // thing that makes people stop trusting a search box.
+  const userQueryNorm = userQuery.trim().toLowerCase();
+  const filteredUsers = state.users.filter(u => {
+    if (userRoleFilter !== 'all' && u.role !== userRoleFilter) return false;
+    if (!userQueryNorm) return true;
+    return [u.name, u.email, u.phone, u.role, u.membershipTier]
+      .some(v => String(v ?? '').toLowerCase().includes(userQueryNorm));
+  });
   // Same derivation the printable report uses, so the on-screen figures and the
   // printed ones come from one place and cannot drift.
   const reportData = buildReportData(reportMonth, state.bookings, state.users);
@@ -881,7 +893,7 @@ export default function AdminDashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-navy-950">
+    <div className="min-h-screen bg-navy-950 portal-surface">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       {pinGate && <PinPromptModal {...pinGate} onCancel={() => setPinGate(null)} />}
       {reviewingBooking && (
@@ -938,13 +950,15 @@ export default function AdminDashboard() {
               <h1 className="font-serif text-3xl text-cream-100">Control Center</h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+              {/* Theme switch, beside the other header actions. */}
+              <ThemeToggle variant="full" />
+              <Link to="/" className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2.5 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300">
                 <ArrowLeft size={14} />
                 Back to Home
               </Link>
               <button
                 onClick={requestLogout}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
+                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-500"
               >
                 <LogOut size={15} />
                 Log out
@@ -969,7 +983,7 @@ export default function AdminDashboard() {
               >
                 {t.label}
                 {t.count !== undefined && t.count > 0 && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-navy-700 text-cream-300">{t.count}</span>
+                  <span className="num text-xs px-1.5 py-0.5 rounded-full bg-navy-700 text-cream-300">{t.count}</span>
                 )}
               </button>
             ))}
@@ -990,7 +1004,7 @@ export default function AdminDashboard() {
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     {group.stats.map(stat => (
                       <div key={stat.label} className="bg-navy-800 border border-gold-400/10 rounded-xl p-4 min-h-[5.25rem]">
-                        <div className={`text-2xl font-semibold ${stat.color} mb-0.5`}>{stat.value}</div>
+                        <div className={`num text-2xl font-semibold ${stat.color} mb-0.5`}>{stat.value}</div>
                         <div className="text-xs text-cream-300">{stat.label}</div>
                       </div>
                     ))}
@@ -1023,7 +1037,7 @@ export default function AdminDashboard() {
                       const customer = state.users.find(u => u.id === b.customerId);
                       return (
                         <tr key={b.id} className="border-b border-gold-400/5 hover:bg-navy-700 transition-colors">
-                          <td className="px-5 py-3 text-cream-300 font-mono text-xs">#{b.id}</td>
+                          <td className="ident px-5 py-3 text-cream-300 text-xs">#{b.id}</td>
                           <td className="px-5 py-3 text-cream-100">{customer?.name || 'Guest'}</td>
                           <td className="px-5 py-3 text-cream-200">{b.service}</td>
                           <td className="px-5 py-3 text-cream-300">{b.date}</td>
@@ -1111,7 +1125,7 @@ export default function AdminDashboard() {
                         <div>
                         <div className="flex items-center gap-2">
                           <span className="font-serif text-cream-100">{b.service}</span>
-                          <span className="font-mono text-xs text-cream-300/60">#{b.id}</span>
+                          <span className="ident text-xs text-cream-300/60">#{b.id}</span>
                         </div>
                         <div className="text-xs text-cream-300 mt-0.5">{b.customerName || customer?.name || 'Guest'} · {b.date} at {b.time} · {b.address}</div>
                         <div className="text-xs text-cream-300/70 mt-1">{b.customerEmail || customer?.email || 'No email'} · {b.customerPhone || customer?.phone || 'No phone'}</div>
@@ -1185,19 +1199,51 @@ export default function AdminDashboard() {
         {tab === 'users' && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
-              <h2 className="font-serif text-2xl text-cream-100">All Users</h2>
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Filter users by role">
-                {USER_ROLE_FILTERS.map(role => (
-                  <button
-                    key={role}
-                    type="button"
-                    onClick={() => setUserRoleFilter(role)}
-                    aria-pressed={userRoleFilter === role}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${userRoleFilter === role ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}
-                  >
-                    {role === 'all' ? 'All' : role}
-                  </button>
-                ))}
+              <div className="flex items-baseline gap-3">
+                <h2 className="font-serif text-2xl text-cream-100">All Users</h2>
+                {/* Reads the same list the table renders, so the count can never
+                    describe a different set from the rows underneath it. */}
+                <span className="text-xs text-cream-300/60">
+                  {filteredUsers.length === state.users.length
+                    ? `${state.users.length} total`
+                    : `${filteredUsers.length} of ${state.users.length}`}
+                </span>
+              </div>
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                <div className="relative w-full sm:w-64">
+                  <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-cream-300/50" />
+                  <input
+                    type="search"
+                    value={userQuery}
+                    onChange={e => setUserQuery(e.target.value)}
+                    placeholder="Search name, email, phone…"
+                    aria-label="Search users"
+                    className="w-full rounded-lg border border-gold-400/20 bg-navy-800 py-1.5 pl-9 pr-8 text-sm text-cream-100 placeholder:text-cream-300/50 focus:border-gold-400/50 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+                  />
+                  {userQuery !== '' && (
+                    <button
+                      type="button"
+                      onClick={() => setUserQuery('')}
+                      aria-label="Clear search"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-cream-300/60 transition-colors hover:text-cream-100"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Filter users by role">
+                  {USER_ROLE_FILTERS.map(role => (
+                    <button
+                      key={role}
+                      type="button"
+                      onClick={() => setUserRoleFilter(role)}
+                      aria-pressed={userRoleFilter === role}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${userRoleFilter === role ? 'bg-gold-400 text-navy-950' : 'border border-gold-400/20 text-cream-300 hover:border-gold-400/50'}`}
+                    >
+                      {role === 'all' ? 'All' : role}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="bg-navy-800 border border-gold-400/10 rounded-xl overflow-hidden">
@@ -1221,8 +1267,24 @@ export default function AdminDashboard() {
                     </tr>
                   ) : filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-12 text-cream-300">
-                        No users found for this role.
+                      <td colSpan={6} className="px-5 py-12 text-center text-cream-300">
+                        {userQueryNorm ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <p>
+                              No users match &ldquo;{userQuery.trim()}&rdquo;
+                              {userRoleFilter !== 'all' ? ' with the ' + userRoleFilter + ' role' : ''}.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setUserQuery('')}
+                              className="text-xs text-gold-400 underline transition-colors hover:text-gold-300"
+                            >
+                              Clear search
+                            </button>
+                          </div>
+                        ) : (
+                          <p>{userRoleFilter === 'all' ? 'No users found yet.' : 'No users found for this role.'}</p>
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -1295,7 +1357,7 @@ export default function AdminDashboard() {
                         <div className="flex flex-wrap items-center gap-2">
                           <Building2 size={15} className="text-gold-400" />
                           <h3 className="font-serif text-lg text-cream-100">{company.name}</h3>
-                          <span className="rounded border border-gold-400/20 px-1.5 py-0.5 font-mono text-[10px] text-cream-300">
+                          <span className="ident rounded border border-gold-400/20 px-1.5 py-0.5 text-[10px] text-cream-300">
                             {company.code}
                           </span>
                         </div>
@@ -1661,12 +1723,17 @@ export default function AdminDashboard() {
                     key={metric.key}
                     className={`rounded-xl border border-gold-400/10 bg-navy-800 p-4${index === 0 ? ' lg:col-span-2' : ''}`}
                   >
-                    <div className={`font-serif text-cream-100 ${index === 0 ? 'text-3xl' : 'text-2xl'}`}>
+                    {/* Was `font-serif` — Playfair Display, a display face, on the
+                        one screen whose whole job is digits. It made the Reports
+                        figures a different typeface from the identical figures on
+                        the Overview tab. Same weight and size as those now, so the
+                        two screens read as one dashboard. */}
+                    <div className={`num font-semibold text-cream-100 ${index === 0 ? 'text-3xl' : 'text-2xl'}`}>
                       {metric.unit === 'percent' ? `${metric.value}%` : metric.value}
                     </div>
                     <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-cream-300/70">{metric.label}</div>
                     <div
-                      className={`mt-1.5 text-[10px] font-medium ${tone}`}
+                      className={`num mt-1.5 text-[10px] font-medium ${tone}`}
                       title={delta.change === null ? 'No previous month with bookings to compare against' : undefined}
                     >
                       {formatDelta(delta, metric.unit)}{suffix}
@@ -1695,7 +1762,7 @@ export default function AdminDashboard() {
                       {panel.entries.map(([name, count]) => (
                         <div key={name} className="flex items-center justify-between text-sm">
                           <span className="text-cream-200">{name}</span>
-                          <span className="font-semibold text-cream-100">{count}</span>
+                          <span className="num font-semibold text-cream-100">{count}</span>
                         </div>
                       ))}
                     </div>
@@ -1707,15 +1774,15 @@ export default function AdminDashboard() {
                 <div className="space-y-1.5 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-cream-200">Member bookings</span>
-                    <span className="font-semibold text-cream-100">{reportData.memberBookings}</span>
+                    <span className="num font-semibold text-cream-100">{reportData.memberBookings}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-cream-200">Priority bookings</span>
-                    <span className="font-semibold text-cream-100">{reportData.priorityBookings}</span>
+                    <span className="num font-semibold text-cream-100">{reportData.priorityBookings}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-cream-200">Non-member bookings</span>
-                    <span className="font-semibold text-cream-100">{reportData.total - reportData.memberBookings}</span>
+                    <span className="num font-semibold text-cream-100">{reportData.total - reportData.memberBookings}</span>
                   </div>
                 </div>
               </div>
@@ -1744,7 +1811,7 @@ export default function AdminDashboard() {
                       {reportData.rows.map(b => (
                         <tr key={b.id} className="border-t border-gold-400/10 text-cream-200">
                           <td className="py-2 pr-3 whitespace-nowrap">{b.date}</td>
-                          <td className="py-2 pr-3 font-mono text-[11px] text-cream-300">{b.id}</td>
+                          <td className="ident py-2 pr-3 text-[11px] text-cream-300">{b.id}</td>
                           <td className="py-2 pr-3">{b.customerName || state.users.find(u => u.id === b.customerId)?.name || '—'}</td>
                           <td className="py-2 pr-3">{b.service || '—'}</td>
                           <td className="py-2 pr-3">{b.city || '—'}</td>
@@ -1760,13 +1827,24 @@ export default function AdminDashboard() {
         )}
 
         {tab === 'security' && (
-          <div className="space-y-5">
-            {/* MFA first, PIN second. Order is deliberate: the MFA panel is the
-                account-level control (a stolen password is useless), while the
-                PIN only guards individual actions. Putting the smaller control
-                first buried the bigger one below the fold. */}
-            <MfaSettings />
-            <PinSettings />
+          <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+            {/* Everything you can ACT on goes down the left — two-factor first,
+                then the PIN. Everything you only READ goes down the right.
+                The column is declared on each card rather than left to source
+                order, so each explanation sits level with the control it
+                explains instead of floating up to the top of the page. */}
+            <div className="lg:col-start-1">
+              <MfaSettings />
+            </div>
+            <div className="lg:col-start-2">
+              <MfaGuidance />
+            </div>
+            <div className="lg:col-start-1">
+              <PinSettings />
+            </div>
+            <div className="lg:col-start-2">
+              <PinGuidance />
+            </div>
           </div>
         )}
       </div>

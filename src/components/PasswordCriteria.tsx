@@ -53,7 +53,9 @@ export default function PasswordCriteria({ password }: PasswordCriteriaProps) {
         <div className="pt-2 mt-2 border-t border-gold-400/10">
           <div className="text-xs font-medium">
             {allMet ? (
-              <span className="text-emerald-400">✓ Password meets all requirements</span>
+              <span className="inline-flex items-center gap-1 text-emerald-400">
+                <CheckCircle2 size={12} /> Password meets all requirements
+              </span>
             ) : (
               <span className="text-cream-300/60">
                 {criteria.filter(c => c.met).length} of {criteria.length} requirements met

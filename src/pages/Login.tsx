@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, ArrowLeft, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, ArrowRight, CheckCircle2, Check, XCircle } from 'lucide-react';
 import { useStore, type UserRole } from '../store';
 import {
   signIn,
@@ -25,7 +25,6 @@ import {
   validatePhone,
   validatePassword,
 } from '../lib/validation';
-import logoImg from '../imports/image-3.png';
 import loginImage from '../imports/login-cleaning.jpg';
 import Logo from '../components/Logo';
 
@@ -572,7 +571,10 @@ export default function Login() {
         <img src={loginImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-navy-950/80 backdrop-blur-[2px]" />
         <div className="relative w-full max-w-lg rounded-2xl border border-gold-400/20 bg-navy-900/95 px-4 py-8 text-center shadow-2xl sm:px-6 sm:py-10 md:px-12">
-          <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-6 h-16 max-h-16 w-auto max-w-[280px] object-contain" />
+          {/* The Logo component, not a raw <img>: this card is white in the light
+              theme, and image-3.png draws "LUXURIOUS" in white — a raw img here
+              is the one place the wordmark vanished. */}
+          <Logo height={64} align="center" className="mb-6" />
           
           {isAdminMfa ? (
             <>
@@ -628,9 +630,9 @@ export default function Login() {
                       setOtpMessage('');
                       setError('');
                     }}
-                    className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
                   >
-                    ← Back to sign in
+                    <ArrowLeft size={12} /> Back to sign in
                   </button>
                 </div>
               </>
@@ -693,9 +695,9 @@ export default function Login() {
                     setOtpMessage('');
                     setError('');
                   }}
-                  className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-gold-400 transition-colors hover:text-gold-300"
                 >
-                  ← Back to sign in
+                  <ArrowLeft size={12} /> Back to sign in
                 </button>
               </div>
             </>
@@ -737,7 +739,7 @@ export default function Login() {
                   autoCapitalize="characters"
                   spellCheck={false}
                   aria-label="Recovery code"
-                  className="w-full max-w-xs rounded-lg border border-gold-400/25 bg-navy-800 px-4 py-3 text-center font-mono text-base tracking-[0.2em] text-cream-100 placeholder-cream-300/30 outline-none transition-colors focus:border-gold-400"
+                  className="ident w-full max-w-xs rounded-lg border border-gold-400/25 bg-navy-800 px-4 py-3 text-center text-base tracking-[0.2em] text-cream-100 placeholder-cream-300/30 outline-none transition-colors focus:border-gold-400"
                 />
               </div>
 
@@ -761,9 +763,9 @@ export default function Login() {
                   type="button"
                   onClick={() => { setShowRecovery(false); setRecoveryCode(''); setRecoveryMessage(''); }}
                   disabled={recoveryBusy}
-                  className="text-xs font-medium text-gold-400 transition-colors hover:text-gold-300 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-gold-400 transition-colors hover:text-gold-300 disabled:opacity-50"
                 >
-                  ← Back to the code from my app
+                  <ArrowLeft size={12} /> Back to the code from my app
                 </button>
               </div>
             </>
@@ -933,9 +935,9 @@ export default function Login() {
             <button
               type="button"
               onClick={() => { setMode('login'); setError(''); setSuccessMessage(''); }}
-              className="w-full text-xs text-cream-300 hover:text-cream-100 transition-colors"
+              className="w-full inline-flex items-center justify-center gap-1 text-xs text-cream-300 hover:text-cream-100 transition-colors"
             >
-              ← Back to sign in
+              <ArrowLeft size={12} /> Back to sign in
             </button>
           </form>
         ) : (
@@ -1014,7 +1016,9 @@ export default function Login() {
                   <p className="text-xs text-red-300 mt-1.5">Passwords do not match</p>
                 )}
                 {regForm.confirmPassword && regForm.password === regForm.confirmPassword && regForm.password.length >= 8 && (
-                  <p className="text-xs text-emerald-400 mt-1.5">✓ Passwords match</p>
+                  <p className="text-xs text-emerald-400 mt-1.5 inline-flex items-center gap-1">
+                    <Check size={12} /> Passwords match
+                  </p>
                 )}
               </div>
 

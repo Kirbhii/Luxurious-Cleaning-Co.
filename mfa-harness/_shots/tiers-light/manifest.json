@@ -1,0 +1,67 @@
+[
+  {
+    "page": "membership",
+    "index": 0,
+    "label": "bronze",
+    "color": "rgb(116, 48, 10)",
+    "file": "C:\\Users\\charles\\OneDrive\\Desktop\\LuxuriousCleaning\\LC\\mfa-harness\\_shots\\tiers-light\\membership-0-bronze.png",
+    "box": {
+      "x": 137,
+      "y": 489.5,
+      "width": 77.34375,
+      "height": 26
+    }
+  },
+  {
+    "page": "membership",
+    "index": 1,
+    "label": "silver",
+    "color": "rgb(51, 65, 85)",
+    "file": "C:\\Users\\charles\\OneDrive\\Desktop\\LuxuriousCleaning\\LC\\mfa-harness\\_shots\\tiers-light\\membership-1-silver.png",
+    "box": {
+      "x": 557,
+      "y": 489.5,
+      "width": 68.953125,
+      "height": 26
+    }
+  },
+  {
+    "page": "membership",
+    "index": 2,
+    "label": "gold",
+    "color": "rgb(122, 78, 0)",
+    "file": "C:\\Users\\charles\\OneDrive\\Desktop\\LuxuriousCleaning\\LC\\mfa-harness\\_shots\\tiers-light\\membership-2-gold.png",
+    "box": {
+      "x": 977,
+      "y": 489.5,
+      "width": 63.09375,
+      "height": 26
+    }
+  },
+  {
+    "page": "home",
+    "index": 0,
+    "label": "bronze",
+    "color": "rgb(116, 48, 10)",
+    "file": "C:\\Users\\charles\\OneDrive\\Desktop\\LuxuriousCleaning\\LC\\mfa-harness\\_shots\\tiers-light\\home-0-bronze.png",
+    "box": {
+      "x": 777,
+      "y": 3594.953125,
+      "width": 145.328125,
+      "height": 15
+    }
+  },
+  {
+    "page": "home",
+    "index": 1,
+    "label": "silver",
+    "color": "rgb(51, 65, 85)",
+    "file": "C:\\Users\\charles\\OneDrive\\Desktop\\LuxuriousCleaning\\LC\\mfa-harness\\_shots\\tiers-light\\home-1-silver.png",
+    "box": {
+      "x": 971.328125,
+      "y": 492.953125,
+      "width": 145.328125,
+      "height": 15
+    }
+  }
+]

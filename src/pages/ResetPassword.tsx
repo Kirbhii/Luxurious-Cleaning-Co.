@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { updatePassword } from '../lib/supabase';
 import { validatePassword } from '../lib/validation';
 import PasswordCriteria from '../components/PasswordCriteria';
-import logoImg from '../imports/image-3.png';
+import Logo from '../components/Logo';
 import loginImage from '../imports/login-cleaning.jpg';
 
 export default function ResetPassword() {
@@ -97,7 +97,7 @@ export default function ResetPassword() {
       <div className="min-h-screen flex-1 flex flex-col justify-start px-6 py-6 sm:px-8 sm:py-8 md:px-12 md:py-12 lg:h-screen lg:overflow-y-auto lg:max-w-md xl:max-w-lg">
         <div className="mb-8">
           <Link to="/" className="flex items-center self-start -ml-2 mb-10 translate-y-6">
-            <img src={logoImg} alt="Luxurious Cleaning Co." className="h-12 max-h-12 w-auto max-w-[240px] object-contain" />
+            <Logo height={48} />
           </Link>
           <h1 className="font-serif text-3xl text-cream-100 mb-1">Reset Your Password</h1>
           <p className="text-sm text-cream-300">
@@ -158,9 +158,9 @@ export default function ResetPassword() {
           <div className="text-center">
             <Link
               to="/login"
-              className="text-xs text-cream-300 hover:text-cream-100 transition-colors"
+              className="inline-flex items-center gap-1 text-xs text-cream-300 hover:text-cream-100 transition-colors"
             >
-              ← Back to sign in
+              <ArrowLeft size={12} /> Back to sign in
             </Link>
           </div>
         </form>

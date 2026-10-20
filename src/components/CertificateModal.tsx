@@ -26,7 +26,7 @@ function buildCertificateHtml(app: TrainingApplication, programName: string, pro
 <style>
   @page { size: landscape; margin: 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Georgia, 'Times New Roman', serif; background: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: Georgia, 'Times New Roman', Times, serif; font-variant-numeric: tabular-nums; background: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .sheet { width: 980px; max-width: 100%; background: #fff; border: 2px solid #c9a227; padding: 10px; }
   .frame { border: 1px solid #c9a227; padding: 6px; background: #fff; }
   .paper { position: relative; background-color: #ffffff; padding: 0 0 12px; text-align: center; color: #1c1a16; overflow: hidden; }
@@ -157,7 +157,7 @@ export default function CertificateModal({ app, programName, programDuration, on
                       <img src={logoImg} alt="" aria-hidden className="object-contain" style={{ height: 30, width: 'auto', maxWidth: 'none' }} />
                     </span>
                     <span className="text-left leading-none">
-                      <span className="block font-serif font-bold text-black text-lg tracking-[0.08em]">LUXURIOUS</span>
+                      <span className="serif-doc block font-bold text-black text-lg tracking-[0.08em]">LUXURIOUS</span>
                       <span className="block text-black text-[8px] tracking-[0.35em] mt-0.5">CLEANING CO.</span>
                     </span>
                   </div>
@@ -167,7 +167,7 @@ export default function CertificateModal({ app, programName, programDuration, on
                 </div>
 
                 <div className="px-8 sm:px-14 pt-3 sm:pt-4 flex-1 flex flex-col justify-start min-h-0">
-                  <div className="font-serif text-2xl sm:text-3xl tracking-[0.15em] uppercase">Certificate</div>
+                  <div className="serif-doc text-2xl sm:text-3xl tracking-[0.15em] uppercase">Certificate</div>
                   <div className="flex items-center gap-3 max-w-[280px] mx-auto my-2">
                     <span className="flex-1 h-px bg-gold-400" />
                     <span className="text-gold-400 text-xs">◆</span>
@@ -176,7 +176,7 @@ export default function CertificateModal({ app, programName, programDuration, on
                   <div className="text-[9px] tracking-[0.3em] uppercase text-[#6b6257] mb-2">
                     Of Completion — Proudly Presented To
                   </div>
-                  <div className="font-serif text-2xl sm:text-3xl italic text-[#131110]">{app.name}</div>
+                  <div className="serif-doc text-2xl sm:text-3xl italic text-[#131110]">{app.name}</div>
                   <div
                     className="w-56 h-0.5 mx-auto my-2.5"
                     style={{ background: 'linear-gradient(90deg, transparent, #c9a227, transparent)' }}
@@ -202,7 +202,7 @@ export default function CertificateModal({ app, programName, programDuration, on
                   {/* Bottom row: signature | seal | date — no overlap */}
                   <div className="flex items-end justify-between mt-5 text-xs text-[#4a443c] w-full max-w-xl mx-auto gap-4">
                     <div className="flex-1 min-w-0">
-                      <div className="font-serif italic text-base sm:text-lg text-[#131110] truncate">Luxurious Cleaning Co.</div>
+                      <div className="serif-doc italic text-base sm:text-lg text-[#131110] truncate">Luxurious Cleaning Co.</div>
                       <div className="border-t border-[#999] mt-1 pt-1 text-[9px] tracking-[0.2em] uppercase text-[#8a6d1b]">
                         Training Director
                       </div>
@@ -215,12 +215,12 @@ export default function CertificateModal({ app, programName, programDuration, on
                           boxShadow: '0 0 0 4px #ffffff, 0 0 0 5px #c9a227',
                         }}
                       >
-                        <span className="text-lg font-bold leading-none font-serif">LC</span>
+                        <span className="serif-doc text-lg font-bold leading-none">LC</span>
                         <span className="text-[6px] tracking-[0.2em] mt-0.5">CERTIFIED</span>
                       </div>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-serif italic text-base sm:text-lg text-[#131110] truncate">{completedDate}</div>
+                      <div className="serif-doc num italic text-base sm:text-lg text-[#131110] truncate">{completedDate}</div>
                       <div className="border-t border-[#999] mt-1 pt-1 text-[9px] tracking-[0.2em] uppercase text-[#8a6d1b]">
                         Date Issued
                       </div>

@@ -202,7 +202,7 @@ export default function PinPromptModal({
               <Lock size={14} className="text-red-300 mt-0.5 shrink-0" />
               <p className="text-[11px] leading-relaxed text-red-200">
                 <span className="font-semibold">PIN locked.</span> Try again in{' '}
-                <span className="font-mono font-semibold">{formatCountdown(secondsLeft)}</span>. The
+                <span className="num font-semibold">{formatCountdown(secondsLeft)}</span>. The
                 correct PIN is rejected until then.
               </p>
             </div>

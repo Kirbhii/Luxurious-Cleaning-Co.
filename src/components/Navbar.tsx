@@ -4,8 +4,9 @@ import { Menu, X, Bell, ChevronDown, LogOut, User, LayoutDashboard } from 'lucid
 import { useStore, useCurrentUser, useNotifications } from '../store';
 import { useToast } from './ToastContainer';
 import ConfirmModal from './ConfirmModal';
+import ThemeToggle from './ThemeToggle';
 import { signOut, markNotificationReadDb, markAllNotificationsReadDb, isUuid } from '../lib/supabase';
-import logoImg from '../imports/image-3.png';
+import Logo from './Logo';
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -68,9 +69,9 @@ export default function Navbar() {
     <>
     <header className="fixed top-0 left-0 right-0 z-50 bg-navy-950/97 backdrop-blur-md border-b border-gold-400/15">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        {/* Logo */}
+        {/* Logo — theme-aware, see Logo.tsx */}
         <div className="flex items-center">
-          <img src={logoImg} alt="Luxurious Cleaning Co." className="h-12 max-h-12 w-auto max-w-[240px] object-contain" />
+          <Logo height={48} />
         </div>
 
         {/* Desktop Nav */}
@@ -88,6 +89,11 @@ export default function Navbar() {
 
         {/* Right actions */}
         <div className="flex items-center gap-3">
+          {/* Light/dark switch. Shown signed in or out — the theme belongs to the
+              site, not to the account, so a visitor who has not signed in can
+              still choose it. */}
+          <ThemeToggle />
+
           {user ? (
             <>
               {/* Notification bell */}

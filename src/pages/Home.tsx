@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, Star, CheckCircle2, ChevronDown, ChevronUp,
   Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare,
+  CalendarDays, Check,
 } from 'lucide-react';
 import logoImg from '../imports/image-3.png';
 import { useCurrentUser } from '../store';
@@ -107,8 +108,8 @@ function PhoneMockup() {
             </div>
 
             {/* Book Now button */}
-            <div className="bg-[#1a73e8] text-white text-[9px] font-bold text-center py-1.5 rounded-sm mb-2">
-              📅 Book Now
+            <div className="bg-[#1a73e8] text-white text-[9px] font-bold py-1.5 rounded-sm mb-2 flex items-center justify-center gap-1">
+              <CalendarDays size={10} strokeWidth={2.5} /> Book Now
             </div>
 
             {/* Info rows */}
@@ -154,7 +155,12 @@ function FeatureBlock({
   amber,
   darkText,
 }: {
-  icon: string;
+  // A node, not a string. This used to take an emoji character — the last five
+  // emoji on the site were all passed through here and through the Book Now
+  // badge. Emoji render differently on every OS, cannot inherit a colour, and
+  // read as decoration rather than as a business's own icon set. These are
+  // lucide icons now, which do all three.
+  icon: ReactNode;
   title: string;
   amber?: boolean;
   darkText?: boolean;
@@ -172,7 +178,7 @@ function FeatureBlock({
     <div
       className={`px-7 py-6 flex flex-col gap-3 ${bg} border-r border-[#0E0C09] last:border-r-0`}
     >
-      <div className="text-3xl">{icon}</div>
+      <div className={textColor}>{icon}</div>
 
       <p
         className={`font-display font-black text-base uppercase leading-tight tracking-wide ${textColor} whitespace-pre-line`}
@@ -206,11 +212,14 @@ export default function Home() {
   }
 
   return (
-    <div className="pt-16" onClickCapture={handleLandingInteraction}>
+    <div className="pt-16" data-surface="home" onClickCapture={handleLandingInteraction}>
       <AuthPromptModal open={authPromptOpen} onClose={() => setAuthPromptOpen(false)} />
 
       {/* ══ HERO ══════════════════════════════════════════════════ */}
-      <section className="relative min-h-screen flex flex-col">
+      {/* data-over-photo: this block sits on a scrimmed photograph, so in the
+          light theme its text keeps its light ink while the page around it
+          inverts. See the light-theme section in index.css. */}
+      <section className="relative min-h-screen flex flex-col" data-over-photo>
 
         {/* Background photo — cleaners at work, heavily darkened */}
         <div className="absolute inset-0">
@@ -274,12 +283,15 @@ export default function Home() {
             {/* Trust badges */}
             <div className={`flex items-center justify-center gap-5 mt-8 mb-10 transition-all duration-700 delay-1000 ${hasAnimated ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
               {[
-                { v: '2,400+', l: 'Cleanings' },
-                { v: '98%', l: 'Satisfaction' },
-                { v: '5★', l: 'Rating' },
+                { v: '2,400+', l: 'Cleanings', star: false },
+                { v: '98%', l: 'Satisfaction', star: false },
+                { v: '5', l: 'Rating', star: true },
               ].map(b => (
                 <div key={b.l} className="text-center">
-                  <div className="font-display font-black text-xl text-[#F5A623]">{b.v}</div>
+                  <div className="font-display font-black text-xl text-[#F5A623] flex items-center justify-center gap-1">
+                    <span className="num">{b.v}</span>
+                    {b.star ? <Star size={14} className="fill-current" strokeWidth={0} /> : null}
+                  </div>
                   <div className="text-[9px] text-[#8A847D] uppercase tracking-wider">{b.l}</div>
                 </div>
               ))}
@@ -303,18 +315,18 @@ export default function Home() {
        <div className="relative sm:absolute sm:bottom-0 sm:left-0 sm:right-0">
   <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#0E0C09]">
     <FeatureBlock
-      icon="⏱️"
+      icon={<Clock size={30} strokeWidth={1.75} />}
       title={"Save Your\nTeam & Money"}
     />
 
     <FeatureBlock
-      icon="🫧"
+      icon={<Leaf size={30} strokeWidth={1.75} />}
       title={"Clean &\nHealthy Environment"}
       amber
     />
 
     <FeatureBlock
-      icon="🏅"
+      icon={<Award size={30} strokeWidth={1.75} />}
       title={"Highly Trained\n& Professional"}
       darkText
     />
@@ -352,11 +364,17 @@ export default function Home() {
                   backgroundPosition: 'center',
                 }}
               >
-                {/* Dark overlay */}
-                <div className="absolute inset-0 bg-black/50 group-hover:bg-black/60 transition-colors duration-300" />
-                
-                {/* Zoom effect layer */}
-                <div 
+                {/*
+                  Zoom layer FIRST, then the scrim.
+
+                  An absolutely positioned sibling that comes LATER in the DOM
+                  paints on top. While the dark overlay sat BEFORE this layer,
+                  this layer (a full copy of the same photograph, at inset-0)
+                  covered it completely — so the overlay did nothing at all and
+                  the labels were white text on a full-brightness photo. That is
+                  why they were unreadable, not because of their colour.
+                */}
+                <div
                   className="absolute inset-0 transition-transform duration-500 group-hover:scale-110"
                   style={{
                     backgroundImage: `url(${service.img})`,
@@ -364,11 +382,24 @@ export default function Home() {
                     backgroundPosition: 'center',
                   }}
                 />
-                
+
+                {/* Scrim — flat, plus extra weight at the bottom where the label
+                    sits. A flat 50% alone is not enough: a white kitchen at 50%
+                    still leaves 12px white text at roughly 3.9:1, under the
+                    4.5:1 it needs. The bottom gradient takes the label's own
+                    strip to about 15:1 without dimming the top of the photo. */}
+                <div className="absolute inset-0 bg-black/50 group-hover:bg-black/60 transition-colors duration-300" />
+                <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+
                 {/* Amber bottom bar on hover */}
                 <div className="absolute inset-x-0 bottom-0 h-1 bg-[#F5A623] scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left z-20" />
                 <div className="absolute inset-0 flex flex-col justify-end p-4 z-10">
-                  <h3 className="font-display font-black text-xs uppercase tracking-wide text-white leading-tight group-hover:text-[#F5A623] transition-colors">
+                  {/* Autumn yellow, not white. White on a photograph competes
+                      with whatever is bright in the picture; the brand gold is
+                      a colour no photo in this set contains, so it separates on
+                      hue even where the photo is pale. Hover goes lighter
+                      rather than changing colour, so the label stays gold. */}
+                  <h3 className="font-display font-black text-xs uppercase tracking-wide text-[#F5A623] leading-tight group-hover:text-[#fbbf4a] transition-colors">
                     {service.name}
                   </h3>
                 </div>
@@ -471,8 +502,8 @@ export default function Home() {
             </div>
             <div className="relative overflow-hidden rounded-2xl group">
               <img src={IMG.afterClean} alt="After cleaning" className="w-full h-80 object-cover brightness-100 group-hover:brightness-110 transition-all duration-500" />
-              <div className="absolute top-4 left-4 bg-[#F5A623] text-[#1C1612] text-xs font-black tracking-[0.2em] uppercase px-4 py-2 rounded">
-                AFTER ✓
+              <div className="absolute top-4 left-4 bg-[#F5A623] text-[#1C1612] text-xs font-black tracking-[0.2em] uppercase px-4 py-2 rounded flex items-center gap-1.5">
+                AFTER <Check size={13} strokeWidth={3.5} />
               </div>
             </div>
           </div>
@@ -510,7 +541,10 @@ export default function Home() {
                 { tier: 'Gold', bg: 'bg-[#F5A623]', badge: 'text-[#1C1612]', dark: true, perks: ['All Silver', 'Urgent cleans', 'Exclusive services', 'Premium support'] },
               ].map(plan => (
                 <div key={plan.tier} className={`${plan.bg} p-6`}>
-                  <span className={`text-[10px] font-black uppercase tracking-wider mb-4 block ${plan.badge}`}>{plan.tier}</span>
+                  {/* data-tier-ink only where the surface under it flips. The Gold
+                      card stays gold in both themes, so its dark label is already
+                      correct and needs no hook. */}
+                  <span data-tier-ink={plan.dark ? undefined : plan.tier.toLowerCase()} className={`text-[10px] font-black uppercase tracking-wider mb-4 block ${plan.badge}`}>{plan.tier}</span>
                   <ul className="space-y-2">
                     {plan.perks.map(p => (
                       <li key={p} className={`flex items-start gap-1.5 text-[11px] leading-tight ${plan.dark ? 'text-[#1C1612]' : 'text-[#C5BEB5]'}`}>
@@ -583,7 +617,9 @@ export default function Home() {
           <div className="grid md:grid-cols-2 overflow-hidden rounded-2xl border border-[#F5A623]/15">
             <div className="relative">
               <img src={IMG.commercial} alt="Commercial cleaning" className="w-full h-full min-h-[300px] object-cover brightness-40" />
-              <div className="absolute inset-0 flex flex-col justify-center px-10">
+              {/* data-over-photo: the wordmark sits on a brightness-40 photo, so
+                  it stays white in both themes. */}
+              <div className="absolute inset-0 flex flex-col justify-center px-10" data-over-photo>
                 <div className="font-display font-black text-5xl text-white uppercase leading-tight">B2B</div>
                 <div className="font-display font-black text-5xl text-[#F5A623] uppercase leading-tight">Partner</div>
                 <div className="font-display font-black text-5xl text-white uppercase leading-tight">Program</div>

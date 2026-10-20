@@ -364,7 +364,7 @@ export default function MfaSettings() {
 
   if (loading) {
     return (
-      <div className="max-w-2xl">
+      <div>
         <div className="bg-navy-800 border border-gold-400/10 rounded-2xl p-6 md:p-8 flex items-center gap-3 text-cream-300">
           <Loader2 size={18} className="animate-spin" />
           <span className="text-sm">Checking your two-factor settings…</span>
@@ -374,7 +374,7 @@ export default function MfaSettings() {
   }
 
   return (
-    <div className="max-w-2xl space-y-5">
+    <div>
       <div className="bg-navy-800 border border-gold-400/10 rounded-2xl p-6 md:p-8">
         <div className="flex items-center gap-3 mb-6">
           <div
@@ -434,7 +434,7 @@ export default function MfaSettings() {
                 <div className="text-[11px] font-medium text-cream-300 uppercase tracking-[0.18em] mb-1.5">
                   Can't scan? Enter this key
                 </div>
-                <code className="block break-all font-mono text-sm text-cream-100 tracking-wider">
+                <code className="ident block break-all text-sm text-cream-100 tracking-wider">
                   {enrollment.secret}
                 </code>
               </div>
@@ -584,7 +584,7 @@ export default function MfaSettings() {
                       <span className="w-4 shrink-0 text-right text-[11px] text-cream-300/70">
                         {i + 1}
                       </span>
-                      <code className="font-mono text-sm tracking-wider text-cream-100">
+                      <code className="ident text-sm tracking-wider text-cream-100">
                         {formatRecoveryCode(c)}
                       </code>
                     </li>
@@ -745,28 +745,48 @@ export default function MfaSettings() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
 
-      <div className="bg-navy-800/60 border border-gold-400/10 rounded-2xl px-6 py-5">
-        <h3 className="text-xs font-medium text-gold-400 uppercase tracking-[0.18em] mb-3">
-          {copy.heading}
-        </h3>
-        <ul className="space-y-2 text-xs text-cream-300 leading-relaxed">
-          <li>{copy.stakes}</li>
-          <li>
-            A code from your phone cannot be guessed, phished from a login page, or reused after 30
-            seconds.
-          </li>
-          <li>
-            Your recovery codes are the only way to remove a lost authenticator by yourself.
-            Save them somewhere you can reach without your phone — an authenticator app does
-            not issue them for you.
-          </li>
-          <li>
-            The PIN on the Security tab is a separate thing — it guards individual sensitive
-            actions, not the account itself.
-          </li>
-        </ul>
-      </div>
+/**
+ * The explanatory half of the two-factor panel — the "why this matters" card.
+ *
+ * Split out of MfaSettings so the Security tab can lay the two ACTION cards
+ * (this panel's and the PIN panel's) down one column and the two EXPLANATION
+ * cards down the other. Interleaving two components' output is not something a
+ * parent can do from the outside, so the two halves have to be separate
+ * components for the layout to be possible at all.
+ *
+ * It is deliberately a sibling rather than a child of the panel: the panel
+ * knows whether a factor exists, this does not and must not pretend to. The
+ * copy is the same role-keyed text the panel uses, so it still describes the
+ * access the reader actually has.
+ */
+export function MfaGuidance() {
+  const copy = ROLE_COPY[useCurrentUser()?.role ?? 'admin'];
+
+  return (
+    <div className="bg-navy-800/60 border border-gold-400/10 rounded-2xl px-6 py-5">
+      <h3 className="text-xs font-medium text-gold-400 uppercase tracking-[0.18em] mb-3">
+        {copy.heading}
+      </h3>
+      <ul className="space-y-2 text-xs text-cream-300 leading-relaxed">
+        <li>{copy.stakes}</li>
+        <li>
+          A code from your phone cannot be guessed, phished from a login page, or reused after 30
+          seconds.
+        </li>
+        <li>
+          Your recovery codes are the only way to remove a lost authenticator by yourself.
+          Save them somewhere you can reach without your phone — an authenticator app does
+          not issue them for you.
+        </li>
+        <li>
+          The PIN on the Security tab is a separate thing — it guards individual sensitive
+          actions, not the account itself.
+        </li>
+      </ul>
     </div>
   );
 }

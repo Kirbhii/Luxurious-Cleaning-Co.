@@ -9,6 +9,7 @@ import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, saveNotificatio
 import { useToast } from '../components/ToastContainer';
 import type { Booking } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import ThemeToggle from '../components/ThemeToggle';
 import { signOut, deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid } from '../lib/supabase';
 import { TIER_PERKS, TIER_SUPPORT, TIER_CREDITS, TIER_DISCOUNT, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/membership';
 
@@ -35,7 +36,7 @@ function ProgressTimeline({ booking }: { booking: Booking }) {
               : i === activeIdx ? 'bg-gold-400/20 border-gold-400 text-gold-400'
               : 'bg-transparent border-cream-300/20 text-cream-300/40'
             }`}>
-              {i < activeIdx ? '✓' : i + 1}
+              {i < activeIdx ? <CheckCircle2 size={11} strokeWidth={3} /> : i + 1}
             </div>
             <span className={`text-[9px] mt-1 text-center leading-tight ${i <= activeIdx ? 'text-cream-200' : 'text-cream-300/40'}`}>{s.label}</span>
           </div>
@@ -302,7 +303,7 @@ export default function CustomerPortal() {
   }
 
   return (
-    <div className="min-h-screen bg-navy-950">
+    <div className="min-h-screen bg-navy-950 portal-surface">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       {/* Header */}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
@@ -312,7 +313,9 @@ export default function CustomerPortal() {
             <h1 className="font-serif text-3xl text-cream-100">Welcome, {user.name.split(' ')[0]}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+            {/* Theme switch, beside the other header actions. */}
+            <ThemeToggle variant="full" />
+            <Link to="/" className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2.5 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300">
               <ArrowLeft size={14} />
               Back to Home
             </Link>
@@ -321,7 +324,7 @@ export default function CustomerPortal() {
             </Link>
             <button
               onClick={requestLogout}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
+              className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-500"
             >
               <LogOut size={14} />
               Log out

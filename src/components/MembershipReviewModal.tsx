@@ -68,7 +68,7 @@ export default function MembershipReviewModal({
               </div>
               <div className="flex justify-between">
                 <span className="text-cream-300/70">Customer ID:</span>
-                <span className="text-cream-100 font-mono text-xs">{user.id.slice(0, 8)}</span>
+                <span className="ident text-cream-100 text-xs">{user.id.slice(0, 8)}</span>
               </div>
             </div>
           </div>

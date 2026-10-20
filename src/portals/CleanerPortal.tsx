@@ -4,9 +4,10 @@ import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, ArrowLeft, LogO
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
+import ThemeToggle from '../components/ThemeToggle';
 import PinPromptModal from '../components/PinPromptModal';
-import PinSettings from '../components/PinSettings';
-import MfaSettings from '../components/MfaSettings';
+import PinSettings, { PinGuidance } from '../components/PinSettings';
+import MfaSettings, { MfaGuidance } from '../components/MfaSettings';
 import { signOut, updateBookingRow } from '../lib/supabase';
 import { useToast } from '../components/ToastContainer';
 
@@ -373,7 +374,7 @@ export default function CleanerPortal() {
   }
 
   return (
-    <div className="min-h-screen bg-navy-950">
+    <div className="min-h-screen bg-navy-950 portal-surface">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-5xl mx-auto px-6 py-6">
@@ -383,13 +384,15 @@ export default function CleanerPortal() {
               <h1 className="font-serif text-3xl text-cream-100">Welcome, {user.name.split(' ')[0]}</h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Link to="/" className="inline-flex items-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-sm font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20">
+              {/* Theme switch, beside the other header actions. */}
+              <ThemeToggle variant="full" />
+              <Link to="/" className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2.5 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300">
                 <ArrowLeft size={14} />
                 Back to Home
               </Link>
               <button
                 onClick={requestLogout}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:border-red-300/50 hover:bg-red-400/20 hover:text-red-200"
+                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-500"
               >
                 <LogOut size={14} />
                 Log out
@@ -425,11 +428,24 @@ export default function CleanerPortal() {
       <div className="max-w-5xl mx-auto px-6 py-8 min-h-[36rem]">
         <div className="space-y-5">
           {tab === 'security' ? (
-            <>
-              {/* MFA before PIN — account-level control above the action-level one. */}
-              <MfaSettings />
-              <PinSettings />
-            </>
+            <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+              {/* Actions down the left (two-factor, then the PIN), the
+                  explanations down the right. The column is declared on each
+                  card rather than left to source order, so each explanation
+                  sits level with the control it explains. */}
+              <div className="lg:col-start-1">
+                <MfaSettings />
+              </div>
+              <div className="lg:col-start-2">
+                <MfaGuidance />
+              </div>
+              <div className="lg:col-start-1">
+                <PinSettings />
+              </div>
+              <div className="lg:col-start-2">
+                <PinGuidance />
+              </div>
+            </div>
           ) : tab === 'active' ? (
             active.length === 0 ? (
               <div className="text-center py-16 text-cream-300">No active jobs assigned.</div>

@@ -33,6 +33,60 @@
   --color-status-cancelled: #EF4444;
 }
 
+/* ─── The type system ────────────────────────────────────────────────────────
+   Three voices. Only three, and every piece of text picks one:
+
+     headings / display  ->  Playfair Display   (`font-serif`)
+     body / UI / labels  ->  Outfit             (default, `--font-sans`)
+     numerals            ->  Outfit + `.num`    (tabular figures)
+
+   Numerals get a rule of their own because digits are the one thing that has to
+   line up in a column. Outfit ships PROPORTIONAL figures by default, so "111" is
+   narrower than "888" and a column of counts visibly wobbles as the numbers
+   change. `tabular-nums` gives every digit the same advance width, which is what
+   makes a table read as a table instead of as ragged text.
+
+   There is deliberately NO separate numeral FACE. A third family for numbers was
+   exactly the inconsistency this replaced: before this, the admin Reports tab
+   drew its big figures in Playfair Display, the Overview cards drew theirs in
+   Outfit, and booking IDs drew theirs in the system monospace — three different
+   number fonts in one dashboard. If you are about to reach for a different font
+   to make a number stand out, reach for weight or size instead.
+
+   `--font-display` (Barlow Condensed) is still declared but nothing uses it.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Tabular figures. Apply to ANY element whose text is (or contains) a number
+   that sits in a column, a card, a badge, or a total. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Machine identifiers (booking refs, certificate numbers) are the ONE place a
+   monospace face is correct: they are read character-by-character, not as a
+   quantity, and mono keeps O/0 and I/1 apart. Pinned here so the two places that
+   need it cannot drift to two different monospace stacks. */
+.ident {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* The formal document face — certificates and the printed report.
+   Georgia, NOT Playfair Display. Playfair is a display serif: its high contrast
+   and tight spacing are built for a 40px headline, and at 10-12px in a table it
+   frays. Georgia was drawn for body text on screen and in print, it is on every
+   Windows and macOS machine, and Times New Roman sits behind it as the fallback
+   that is on literally everything. A document that has to survive being printed
+   by a stranger should not depend on a webfont downloading first.
+   The certificate's own print stylesheet already used this stack; the on-screen
+   preview used Playfair, so the preview and the printout were two different
+   typefaces. Now both use this. */
+.serif-doc {
+  font-family: Georgia, 'Times New Roman', Times, serif;
+}
+
 html,
 body,
 #root {
@@ -277,3 +331,287 @@ img {
   background-color: #141210;
   border-bottom: 1px solid rgba(245, 166, 35, 0.1);
 }
+
+/* ── The wordmark has two files ───────────────────────────────────────────────
+   The logo is a raster, not text, so the theme cannot recolour it the way it
+   recolours everything else — the dark file draws its word in white, and on the
+   light theme's white bar the word simply vanishes. Logo.tsx mounts both files
+   and the theme picks one here.
+
+   `display: none` also removes the hidden one from the accessibility tree, so a
+   screen reader announces the company name once, not twice.
+
+   `data-theme="dark"` is set on <html> in index.html rather than left absent,
+   so both states are something a selector can name. It also means a visitor
+   with JavaScript disabled still gets a complete, correct logo — the attribute
+   is in the markup, not something the script has to add. */
+[data-theme='dark'] .theme-light-only { display: none !important; }
+[data-theme='light'] .theme-light-only { display: block !important; }
+[data-theme='light'] .theme-dark-only { display: none !important; }
+
+/* ═══ Light theme ═══════════════════════════════════════════════════════════
+
+   EVERY rule below is scoped to [data-theme='light']. That is the whole safety
+   story: with the attribute absent nothing here matches, so the dark theme
+   cannot regress. It also means the feature can be removed in one piece.
+
+   The theme works by re-pointing the palette tokens rather than by rewriting
+   components. Tailwind v4 emits `background-color: var(--color-navy-900)`, not
+   an inlined hex, so redefining the token repaints every surface that used it —
+   the whole app — without touching a single component.
+
+   ── The three things a token flip cannot do, and what happens instead ──────
+   1. A few backgrounds are written as literals in this file (html/body/#root,
+      the page wrapper, the page header, the skeleton). No token reaches them.
+   2. One token does two jobs. `--color-navy-950` is BOTH the page surface AND
+      the ink that sits on a gold button — more than thirty sites write
+      `bg-gold-400 … text-navy-950`. Flipping it to serve the page turned every
+      gold button pale-on-gold (~1.9:1). The ink wins, so text-navy-950 is
+      pinned dark below.
+   3. Home.tsx is built on hardcoded hex instead of tokens — 146 of them — so it
+      needs its own scoped translation at the end of this section.
+
+   `!important` is used deliberately on the rules that override a Tailwind
+   utility. A miss here is silent (the theme simply does not apply, with no
+   error anywhere), so the cheap insurance is worth more than the tidiness.
+
+   NOT done here, on purpose: gold text is not darkened. #F5A623 on a light
+   surface is only ~1.9:1 and the contrast audit flags it, but gold is the brand
+   colour and a brighter gold that is ALSO readable on white does not exist. He
+   was asked and decided: the accent stays the accent. Do not re-darken it
+   without asking.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── The cross-fade ──────────────────────────────────────────────────────────
+   Added by setTheme() for a single switch and removed ~380ms later. Leaving it
+   on permanently would put a third of a second of lag on every hover in the
+   app. Suppressed entirely for anyone who has asked for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-anim,
+  html.theme-anim *,
+  html.theme-anim *::before,
+  html.theme-anim *::after {
+    transition:
+      background-color 340ms ease,
+      color 340ms ease,
+      border-color 340ms ease,
+      fill 340ms ease,
+      stroke 340ms ease,
+      box-shadow 340ms ease !important;
+  }
+}
+
+/* ── The palette ─────────────────────────────────────────────────────────────
+   The dark theme runs dark-surface -> light-text. Flipping it means the surface
+   ramp inverts and the text ramp inverts with it.
+
+   The page stays near-white; the CARD is what has to read as a separate plane,
+   so it carries a warm cream tint drawn from the palette's own cream ramp
+   rather than being pure white. A tinted card on a neutral page separates by
+   HUE rather than by brightness — red and green stay high while blue drops — so
+   it reads as warm paper instead of as a grey box.
+
+   cream-300 is #5f5a51 rather than #6b665d: the latter measures 4.46:1 on the
+   navy-700 chip, a hair under AA. */
+html[data-theme='light'] {
+  --color-navy-950: #f6f5f2;
+  --color-navy-900: #ffffff;
+  --color-navy-800: #f4efe4;
+  --color-navy-700: #eae3d4;
+  --color-navy-600: #ded5c2;
+
+  --color-cream-50:  #14120f;
+  --color-cream-100: #1a1815;
+  --color-cream-200: #35312b;
+  --color-cream-300: #5f5a51;
+}
+
+/* Literal backgrounds the token flip cannot reach. */
+[data-theme='light'],
+[data-theme='light'] body,
+[data-theme='light'] #root {
+  background-color: #f6f5f2 !important;
+  color: #1a1815 !important;
+}
+[data-theme='light'] .page-wrapper { background-color: #f6f5f2 !important; }
+[data-theme='light'] .page-header  {
+  background-color: #ffffff !important;
+  border-bottom-color: rgba(0, 0, 0, 0.08) !important;
+}
+[data-theme='light'] .skeleton { background: #eceae5 !important; }
+
+/* ── Card definition ─────────────────────────────────────────────────────────
+   The app draws card edges as border-gold-400/10 — gold at 10%, which vanishes
+   once the surface under it is light. Raised to a warm 20%, plus a whisper of
+   shadow, so a tinted card reads as a raised plane instead of a patch of colour.
+   Whole-word match (~=) on purpose: a substring match on /5 would also catch
+   /50 and quietly weaken every hover border. */
+[data-theme='light'] [class~="border-gold-400/10"] { border-color: rgba(150, 112, 35, 0.20) !important; }
+[data-theme='light'] [class~="border-gold-400/5"]  { border-color: rgba(150, 112, 35, 0.10) !important; }
+[data-theme='light'] [class*="bg-navy-800"][class*="rounded-xl"],
+[data-theme='light'] [class*="bg-navy-800"][class*="rounded-2xl"] {
+  box-shadow: 0 1px 2px rgba(74, 56, 22, 0.06), 0 1px 1px rgba(74, 56, 22, 0.04);
+}
+
+/* A dark scrim behind a modal is still correct on a light page — but 90% of a
+   near-white token is nearly invisible, so it is pinned to a real dark scrim. */
+[data-theme='light'] .fixed.inset-0 { background-color: rgba(20, 18, 15, 0.55) !important; }
+
+/* ── Toasts keep their own dark surface ───────────────────────────────────────
+   A toast is bg-emerald-900 / red-900 / amber-900 / blue-900 — stock Tailwind
+   colours this theme never touches — while its text is text-cream-100 and
+   text-cream-300, which DO flip. So the message came out near-black on dark
+   green. The ink goes back wherever the surface never moved.
+   animate-slide-in-right is on the toast and on nothing else. */
+[data-theme='light'] .animate-slide-in-right p:first-child,
+[data-theme='light'] .animate-slide-in-right button { color: #F4F0EB !important; }
+[data-theme='light'] .animate-slide-in-right p + p { color: rgba(168, 163, 157, 0.92) !important; }
+
+/* ── Ink, not surface ─────────────────────────────────────────────────────────
+   See point 2 at the top: this token is the page AND the ink on a gold button.
+   A colour used as TEXT stays dark when the theme flips. */
+[data-theme='light'] [class~="text-navy-950"] { color: #1a1815 !important; }
+
+/* ── The portals are pure white ───────────────────────────────────────────────
+   Asked for directly: the public pages keep the neutral off-white, the portals
+   are white so the cream cards sit on them unmistakably. Re-pointing
+   --color-navy-950 on the portal root does that for the whole subtree — the
+   portal header band was already bg-navy-900 (#ffffff), so the top of the page
+   and the body finally agree instead of being two slightly different whites.
+
+   Safe because the gold-button ink is pinned above, and because modal scrims are
+   pinned separately — re-pointing this token cannot turn either of them white. */
+[data-theme='light'] .portal-surface {
+  --color-navy-950: #ffffff;
+  background-color: #ffffff !important;
+}
+
+/* ═══ Home.tsx only ══════════════════════════════════════════════════════════
+   Home is the ONE page built on hardcoded hex instead of the tokens — 146 of
+   them, in arbitrary Tailwind classes like bg-[#141210] and text-[#F5A623]. The
+   token flip therefore cannot reach it, and without this block Home would stay
+   fully dark on a light site.
+
+   Everything here is scoped to [data-surface='home'], so none of it can leak to
+   another page. This is a translation of that page's private palette, not a
+   redesign — the values are the ones the page already uses.
+
+   The real fix is to move Home onto the tokens; that is a separate job.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Surfaces */
+[data-theme='light'] [data-surface='home'] [class~="bg-[#0E0C09]"]     { background-color: #f6f5f2 !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#141210]"]     { background-color: #ffffff !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#1C1916]"]     { background-color: #f4efe4 !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#231F1A]"]     { background-color: #f4efe4 !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#1C1612]"]     { background-color: #f4efe4 !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#1a1612]"]     { background-color: #f1efea !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#2A2018]"]     { background-color: #f1efea !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#1E1B16]/90"]  { background-color: rgba(255, 255, 255, 0.92) !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#1C1612]/90"]  { background-color: rgba(255, 255, 255, 0.92) !important; }
+[data-theme='light'] [data-surface='home'] [class~="bg-[#232018]"]     { background-color: #ffffff !important; }
+[data-theme='light'] [data-surface='home'] [class~="border-[#2a2520]"] { border-color: #ddd8d0 !important; }
+
+/* text-white sits on surfaces that were dark, so inverted it must be near-black.
+   text-[#1C1612] is deliberately NOT touched — that is the dark label ON a gold
+   button, and it stays dark in both themes. text-[#F5A623] is deliberately
+   absent: gold text stays gold, see the note at the top of this section. */
+[data-theme='light'] [data-surface='home'] .text-white               { color: #1a1815 !important; }
+[data-theme='light'] [data-surface='home'] [class~="text-[#A8A39D]"] { color: #5f5a51 !important; }
+[data-theme='light'] [data-surface='home'] [class~="text-[#8A847D]"] { color: #5f5a51 !important; }
+[data-theme='light'] [data-surface='home'] [class~="text-[#C5BEB5]"] { color: #4a453e !important; }
+[data-theme='light'] [data-surface='home'] [class~="text-[#D0C9B8]"] { color: #4a453e !important; }
+
+/* ── Text that sits on a photograph stays light ───────────────────────────────
+   The rules above are page-wide, and .text-white is used both by the hero and
+   by the body sections. Anything marked data-over-photo is a surface that did
+   NOT change — a scrimmed photograph — so its ink is put back.
+
+   This is done with an explicit marker rather than by guessing from the CSS.
+   CSS cannot ask "is there a picture behind me?", and a structural guess (an
+   ancestor with a url() background, or a covering sibling <img>) was tried in
+   the preview harness: it works, but it needs a script running over the DOM on
+   every paint, and it cannot tell a photograph from a gradient. A marker on the
+   two blocks that actually sit on a picture is honest and costs nothing. */
+[data-theme='light'] [data-surface='home'] [data-over-photo] .text-white               { color: #ffffff !important; }
+[data-theme='light'] [data-surface='home'] [data-over-photo] [class~="text-[#F5A623]"] { color: #F5A623 !important; }
+[data-theme='light'] [data-surface='home'] [data-over-photo] [class~="text-[#C5BEB5]"] { color: #C5BEB5 !important; }
+[data-theme='light'] [data-surface='home'] [data-over-photo] [class~="text-[#8A847D]"] { color: #8A847D !important; }
+[data-theme='light'] [data-surface='home'] [data-over-photo] [class~="text-[#A8A39D]"] { color: #A8A39D !important; }
+
+/* ...and so do the surfaces inside it. The feature strip pinned to the bottom of
+   the hero is a dark bar — bg-[#1E1B16]/90 over bg-[#0E0C09] — and the rules
+   above had repainted BOTH to near-white while the ink rules put its white text
+   back, which is exactly how you get white words on a white bar. */
+[data-theme='light'] [data-surface='home'] [data-over-photo] [class~="bg-[#0E0C09]"]    { background-color: #0E0C09 !important; }
+[data-theme='light'] [data-surface='home'] [data-over-photo] [class~="bg-[#1E1B16]/90"] { background-color: rgba(30, 27, 22, 0.90) !important; }
+
+/* ── The hero is NOT re-lit by the theme ──────────────────────────────────────
+   There is deliberately no scrim rule here. The hero is a photograph behind a
+   dark scrim, and a theme has no business changing how bright a photograph is.
+
+   An earlier version lightened the scrims (the flat overlay from 0.85 to 0.55,
+   and both gradients), on the theory that a light page wants a lighter hero. It
+   does not: the photograph came through as a flat grey haze, the headline lost
+   its backing, and it read as a picture that had been washed out rather than as
+   a theme. He spotted it immediately — "parang may gray sa picture".
+
+   The scrim classes are bg-[#0E0C09]/85 and two gradient stops, and none of the
+   general Home rules above can reach them (a background-COLOR rule cannot touch
+   a gradient, and bg-[#0E0C09]/85 is a different class token from
+   bg-[#0E0C09]). So simply not writing a rule leaves the hero exactly as the
+   dark theme has it — which is the point.
+
+   If the hero should be lighter, that is a change to Home itself and it applies
+   to BOTH themes. It is not a theme setting. */
+
+/* ═══ Membership tier badges ═════════════════════════════════════════════════
+   amber-400 / slate-300 / gold-300 are inks chosen to sit on a DARK card. In
+   light mode the same cards become pale tan and pale grey, and those three inks
+   disappear into them — "di mabasa sa light mode".
+
+   The fix keeps the HUE and deepens the shade, so the badge still reads as
+   bronze / silver / gold instead of turning into three identical grey labels.
+   The pill's own tint is darkened in step, otherwise a 20% amber wash on a tan
+   card is invisible and the badge loses its shape.
+
+   Two hooks, because the two pages want different amounts of it:
+     data-tier-pill  Membership.tsx — colour + fill + border (it IS a pill)
+     data-tier-ink   Home.tsx — colour only (it is bare text on a flat card)
+   Both are markup markers for the same reason as data-over-photo: CSS cannot
+   tell which surface a class ended up on. */
+
+[data-theme='light'] {
+  /* amber-800 (#92400e) measured 3.64:1 on the tan gradient — the pill's own
+     wash darkens the surface it sits on. This is the darkest shade that still
+     reads as bronze rather than as brown. */
+  --tier-bronze-ink:  #74300a;
+  --tier-bronze-fill: rgba(180, 83, 9, 0.12);
+  --tier-bronze-line: rgba(180, 83, 9, 0.32);
+  --tier-silver-ink:  #334155;
+  --tier-silver-fill: rgba(100, 116, 139, 0.12);
+  --tier-silver-line: rgba(100, 116, 139, 0.30);
+  --tier-gold-ink:    #7a4e00;
+  --tier-gold-fill:   rgba(192, 125, 10, 0.14);
+  --tier-gold-line:   rgba(192, 125, 10, 0.34);
+}
+
+[data-theme='light'] [data-tier-pill='bronze'] {
+  color: var(--tier-bronze-ink) !important;
+  background-color: var(--tier-bronze-fill) !important;
+  border-color: var(--tier-bronze-line) !important;
+}
+[data-theme='light'] [data-tier-pill='silver'] {
+  color: var(--tier-silver-ink) !important;
+  background-color: var(--tier-silver-fill) !important;
+  border-color: var(--tier-silver-line) !important;
+}
+[data-theme='light'] [data-tier-pill='gold'] {
+  color: var(--tier-gold-ink) !important;
+  background-color: var(--tier-gold-fill) !important;
+  border-color: var(--tier-gold-line) !important;
+}
+
+[data-theme='light'] [data-tier-ink='bronze'] { color: var(--tier-bronze-ink) !important; }
+[data-theme='light'] [data-tier-ink='silver'] { color: var(--tier-silver-ink) !important; }
+

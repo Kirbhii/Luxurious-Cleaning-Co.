@@ -507,7 +507,7 @@ export default function Membership() {
                     Most Popular
                   </div>
                 )}
-                <span className={`inline-block text-xs font-semibold tracking-wider uppercase px-3 py-1 rounded-full border mb-4 ${tier.badge}`}>{tier.name}</span>
+                <span data-tier-pill={tier.id} className={`inline-block text-xs font-semibold tracking-wider uppercase px-3 py-1 rounded-full border mb-4 ${tier.badge}`}>{tier.name}</span>
                 <div className="mb-6">
                   <span className="font-serif text-4xl text-cream-100">{formatPeso(TIER_PRICE[tier.id])}</span>
                   <span className="text-sm text-cream-300"> / month</span>

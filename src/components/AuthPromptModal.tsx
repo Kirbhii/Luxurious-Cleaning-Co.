@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
-import logoImg from '../imports/image-3.png';
+import Logo from './Logo';
 
 interface AuthPromptModalProps {
   open: boolean;
@@ -50,7 +50,7 @@ export default function AuthPromptModal({ open, onClose, redirectAfterLogin }: A
         >
           <X size={18} />
         </button>
-        <img src={logoImg} alt="Luxurious Cleaning Co." className="mx-auto mb-5 h-12 max-h-12 w-auto max-w-[240px] object-contain" />
+        <Logo height={48} align="center" className="mb-5" />
         <h2 id="auth-prompt-title" className="font-serif text-2xl text-cream-100 mb-2">Welcome to Luxurious Cleaning Co.</h2>
         <p className="text-sm leading-relaxed text-cream-300 mb-7">Please sign in to continue, or create an account to get started.</p>
         <div className="grid grid-cols-2 gap-3">
