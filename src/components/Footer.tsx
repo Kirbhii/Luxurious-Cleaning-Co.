@@ -53,7 +53,7 @@ export default function Footer() {
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="Luxurious Cleaning on Facebook"
-                className="w-8 h-8 rounded-full border border-gold-400/20 flex items-center justify-center hover:border-gold-400/50 hover:bg-gold-400/10 transition-colors text-cream-300"
+                className="w-10 h-10 sm:w-8 sm:h-8 rounded-full border border-gold-400/20 flex items-center justify-center hover:border-gold-400/50 hover:bg-gold-400/10 transition-colors text-cream-300"
               >
                 <FacebookIcon size={14} />
               </a>
@@ -63,10 +63,14 @@ export default function Footer() {
           {/* Services */}
           <div>
             <h4 className="text-xs font-semibold tracking-[0.15em] uppercase text-gold-400 mb-4">Services</h4>
-            <ul className="space-y-2.5">
+            {/* py-2 on a phone, 0 from sm upward. A bare text link is only
+                ~18px tall — well under a thumb. The padding grows the tap
+                area without moving the text, and space-y drops to 0 so the
+                column does not become twice as tall. */}
+            <ul className="space-y-0 sm:space-y-2.5">
               {['Residential Cleaning', 'Deep Cleaning', 'Move-In / Move-Out', 'Post-Construction', 'Commercial Cleaning', 'Office Cleaning', 'Condo Cleaning'].map(s => (
                 <li key={s}>
-                  <Link to="/services" className="text-sm text-cream-300 hover:text-cream-50 transition-colors">{s}</Link>
+                  <Link to="/services" className="block py-2 sm:py-0 text-sm text-cream-300 hover:text-cream-50 transition-colors">{s}</Link>
                 </li>
               ))}
             </ul>
@@ -75,9 +79,10 @@ export default function Footer() {
           {/* Company */}
           <div>
             <h4 className="text-xs font-semibold tracking-[0.15em] uppercase text-gold-400 mb-4">Company</h4>
-            <ul className="space-y-2.5">
+            <ul className="space-y-0 sm:space-y-2.5">
               {[
                 { to: '/about', label: 'About Us' },
+                { to: '/reviews', label: 'Reviews' },
                 { to: '/membership', label: 'Membership' },
                 { to: '/partnerships', label: 'Partnerships' },
                 { to: '/training', label: 'Training' },
@@ -85,7 +90,7 @@ export default function Footer() {
                 { to: '/book', label: 'Book a Service' },
               ].map(l => (
                 <li key={l.to}>
-                  <Link to={l.to} className="text-sm text-cream-300 hover:text-cream-50 transition-colors">{l.label}</Link>
+                  <Link to={l.to} className="block py-2 sm:py-0 text-sm text-cream-300 hover:text-cream-50 transition-colors">{l.label}</Link>
                 </li>
               ))}
             </ul>

@@ -1,16 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   CalendarCheck, Clock, CheckCircle2, XCircle, Bell, ArrowRight, ArrowLeft,
   ChevronDown, ChevronUp, Camera, User as UserIcon, Crown, LogOut, Save, Trash2,
-  GraduationCap, Briefcase,
+  GraduationCap, Briefcase, PenLine, MessageSquarePlus,
 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, saveNotification } from '../store';
 import { useToast } from '../components/ToastContainer';
 import type { Booking } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
 import ThemeToggle from '../components/ThemeToggle';
-import { signOut, deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid } from '../lib/supabase';
+import ReviewCard from '../components/ReviewCard';
+import ReviewFormModal from '../components/ReviewFormModal';
+import {
+  signOut, deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid,
+  fetchMyReviews, deleteReview, type ReviewRow,
+} from '../lib/supabase';
 import { TIER_PERKS, TIER_SUPPORT, TIER_CREDITS, TIER_DISCOUNT, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/membership';
 
 const STATUS_ORDER = [
@@ -49,7 +54,7 @@ function ProgressTimeline({ booking }: { booking: Booking }) {
   );
 }
 
-function BookingCard({ booking, cleanerName, onDelete }: { booking: Booking; cleanerName: string | null; onDelete?: () => void }) {
+function BookingCard({ booking, cleanerName, onDelete, onReview }: { booking: Booking; cleanerName: string | null; onDelete?: () => void; onReview?: () => void }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -87,6 +92,19 @@ function BookingCard({ booking, cleanerName, onDelete }: { booking: Booking; cle
           {cleanerName && <><span>·</span><span className="text-cream-200">Cleaner: {cleanerName}</span></>}
         </div>
         <ProgressTimeline booking={booking} />
+
+        {/* Asking for a review right where the job ended. This is the only
+            moment the customer is already thinking about the clean, so it is
+            the one place the request is welcome rather than noise. */}
+        {onReview && (
+          <button
+            type="button"
+            onClick={onReview}
+            className="mt-4 inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-gold-400/30 bg-gold-400/10 px-4 py-2.5 text-xs font-semibold text-gold-400 transition-colors hover:border-gold-400/50 hover:bg-gold-400/20"
+          >
+            <PenLine size={13} aria-hidden="true" /> Leave a review
+          </button>
+        )}
       </div>
 
       {/* Expand toggle */}
@@ -157,7 +175,7 @@ export default function CustomerPortal() {
   const user = useCurrentUser()!;
   const navigate = useNavigate();
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'bookings' | 'applications' | 'notifications' | 'membership' | 'profile'>('bookings');
+  const [activeTab, setActiveTab] = useState<'bookings' | 'applications' | 'notifications' | 'membership' | 'reviews' | 'profile'>('bookings');
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
   const [profileForm, setProfileForm] = useState({ name: user.name, email: user.email, phone: user.phone });
   const [profileMessage, setProfileMessage] = useState('');
@@ -168,6 +186,28 @@ export default function CustomerPortal() {
     confirmLabel: string;
     onConfirm: () => void;
   } | null>(null);
+
+  const [myReviews, setMyReviews] = useState<ReviewRow[]>([]);
+  const [reviewFormOpen, setReviewFormOpen] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<{ bookingId: string; service: string } | null>(null);
+  const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
+
+  const reviewedBookingIds = new Set(
+    myReviews.map((r) => r.booking_id).filter((id): id is string => Boolean(id))
+  );
+
+  // Load this customer's own reviews once. A missing table is not an error
+  // here either — the tab simply stays empty until the migration is applied.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await fetchMyReviews(user.id);
+      if (!cancelled) setMyReviews(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user.id]);
 
   const myBookings = state.bookings.filter(b => b.customerId === user.id);
   const myTrainingApps = state.trainingApplications.filter(a => a.userId === user.id);
@@ -305,6 +345,20 @@ export default function CustomerPortal() {
   return (
     <div className="min-h-screen bg-navy-950 portal-surface">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
+
+      <ReviewFormModal
+        open={reviewFormOpen || reviewTarget !== null}
+        onClose={() => {
+          setReviewFormOpen(false);
+          setReviewTarget(null);
+        }}
+        bookingId={reviewTarget?.bookingId ?? null}
+        service={reviewTarget?.service}
+        onCreated={(review) => {
+          setMyReviews((prev) => [review, ...prev]);
+          setReviewTarget(null);
+        }}
+      />
       {/* Header */}
       <div className="bg-navy-900 border-b border-gold-400/10 pt-16">
         <div className="max-w-7xl mx-auto px-6 py-6 flex flex-wrap items-start justify-between gap-4">
@@ -352,20 +406,23 @@ export default function CustomerPortal() {
           ))}
         </div>
 
-        {/* Tabs */}
+        {/* Tabs — horizontally scrollable on a phone. Six labels never fit in
+            390px, and a wrapping tab bar looks broken; a scroll strip keeps
+            every tab reachable without shrinking the text. */}
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex gap-1 border-b border-gold-400/10">
+          <div className="flex gap-1 border-b border-gold-400/10 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {[
               { key: 'bookings', label: 'Bookings', count: myBookings.length },
               { key: 'applications', label: 'My Applications', count: applicationsCount },
               { key: 'notifications', label: 'Notifications', count: unreadCount },
               { key: 'membership', label: 'Membership' },
+              { key: 'reviews', label: 'My Reviews' },
                 { key: 'profile', label: 'Profile' },
             ].map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as typeof activeTab)}
-                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
                   activeTab === tab.key
                     ? 'border-gold-400 text-gold-400'
                     : 'border-transparent text-cream-300 hover:text-cream-100'
@@ -403,7 +460,16 @@ export default function CustomerPortal() {
               <div className="mb-8">
                 <div className="text-xs text-cream-300/60 uppercase tracking-wider font-medium mb-4">Completed</div>
                 <div className="space-y-4">
-                  {completed.map(b => <BookingCard key={b.id} booking={b} cleanerName={getCleanerName(b.cleanerId)} />)}
+                  {completed.map(b => (
+                    <BookingCard
+                      key={b.id}
+                      booking={b}
+                      cleanerName={getCleanerName(b.cleanerId)}
+                      // One review per booking (a unique index enforces it), so
+                      // the prompt disappears once it has been written.
+                      onReview={reviewedBookingIds.has(b.id) ? undefined : () => setReviewTarget({ bookingId: b.id, service: b.service })}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -606,6 +672,52 @@ export default function CustomerPortal() {
                 <Link to="/membership" className="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 text-sm font-semibold px-6 py-3 rounded-lg transition-colors">
                   Explore Membership <ArrowRight size={14} />
                 </Link>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'reviews' && (
+          <div className="max-w-4xl">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <div>
+                <h2 className="font-serif text-2xl text-cream-100">My Reviews</h2>
+                <p className="text-xs text-cream-300 mt-1">
+                  Reviews you have written. They appear on the public reviews page and on the home page.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewFormOpen(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-5 py-3 text-sm font-semibold text-navy-950 hover:bg-gold-300 transition-colors shrink-0"
+              >
+                <PenLine size={14} aria-hidden="true" /> Write a review
+              </button>
+            </div>
+
+            {myReviews.length === 0 ? (
+              <div className="rounded-2xl border border-gold-400/10 bg-navy-800 px-6 py-12 text-center">
+                <MessageSquarePlus size={22} className="mx-auto mb-3 text-gold-400" aria-hidden="true" />
+                <h3 className="font-serif text-lg text-cream-100 mb-2">You have not written a review yet</h3>
+                <p className="text-sm text-cream-300 leading-relaxed max-w-md mx-auto">
+                  Once a cleaning is finished, telling others what it was like takes a minute and helps a lot.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {myReviews.map((review) => (
+                  <ReviewCard
+                    key={review.id}
+                    review={review}
+                    busy={reviewBusyId === review.id}
+                    onDelete={async (id) => {
+                      setReviewBusyId(id);
+                      const { error } = await deleteReview(id);
+                      setReviewBusyId(null);
+                      if (!error) setMyReviews((prev) => prev.filter((r) => r.id !== id));
+                    }}
+                  />
+                ))}
               </div>
             )}
           </div>

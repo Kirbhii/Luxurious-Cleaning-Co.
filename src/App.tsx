@@ -9,6 +9,7 @@ import Home from './pages/Home';
 import Services from './pages/Services';
 import About from './pages/About';
 import Membership from './pages/Membership';
+import Reviews from './pages/Reviews';
 import Partnerships from './pages/Partnerships';
 import Training from './pages/Training';
 import Contact from './pages/Contact';
@@ -90,6 +91,7 @@ function AppRoutes() {
       <Route path="/services"    element={<PublicLayout><Services /></PublicLayout>} />
       <Route path="/about"       element={<PublicLayout><About /></PublicLayout>} />
       <Route path="/membership"  element={<PublicLayout><Membership /></PublicLayout>} />
+      <Route path="/reviews"     element={<PublicLayout><Reviews /></PublicLayout>} />
       <Route path="/partnerships" element={<PublicLayout><Partnerships /></PublicLayout>} />
       <Route path="/training"    element={<PublicLayout><Training /></PublicLayout>} />
       <Route path="/contact"     element={<PublicLayout><Contact /></PublicLayout>} />

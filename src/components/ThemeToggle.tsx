@@ -69,7 +69,10 @@ export default function ThemeToggle({
       onClick={toggleTheme}
       aria-label={`Switch to ${label.toLowerCase()}`}
       title={`Switch to ${label.toLowerCase()}`}
-      className={`relative w-9 h-9 flex items-center justify-center rounded-full border border-gold-400/20 hover:border-gold-400/50 transition-colors ${className}`}
+      // 40px on a phone, 36px from sm upward. A 36px circle is below the
+      // 40px thumb target that phone guidelines ask for, and this button
+      // sits right beside the menu button — an easy mis-tap.
+      className={`relative w-10 h-10 sm:w-9 sm:h-9 flex items-center justify-center rounded-full border border-gold-400/20 hover:border-gold-400/50 transition-colors ${className}`}
     >
       {icon('text-cream-200')}
     </button>

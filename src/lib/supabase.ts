@@ -195,6 +195,44 @@ export interface ContactMessageRow {
   created_at: string;
 }
 
+/** Mirrors public.reviews (deploy/18_REVIEWS.sql). */
+export interface ReviewRow {
+  id: string;
+  user_id: string;
+  booking_id: string | null;
+  customer_name: string;
+  location: string | null;
+  rating: number;
+  quote: string;
+  service: string | null;
+  /** True when the review is tied to a booking this customer actually had. */
+  verified: boolean;
+  /** Admin moderation toggle. Hidden reviews are invisible to the public. */
+  is_hidden: boolean;
+  created_at: string;
+}
+
+/**
+ * What a client may send when creating a review.
+ *
+ * `verified` and `is_hidden` are absent on purpose: both are moderation
+ * decisions. The database defaults them and a trigger refuses any change from
+ * a non-admin, so listing them here would only invite a caller to try.
+ */
+export type ReviewInsert = {
+  user_id: string;
+  booking_id?: string | null;
+  customer_name: string;
+  location?: string | null;
+  rating: number;
+  quote: string;
+  service?: string | null;
+};
+
+export type ReviewUpdate = Partial<
+  Pick<ReviewRow, 'rating' | 'quote' | 'service' | 'location' | 'is_hidden'>
+>;
+
 // Full Database shape used by createClient<Database>()
 export interface Database {
   public: {
@@ -243,6 +281,11 @@ export interface Database {
         Row: ContactMessageRow;
         Insert: Omit<ContactMessageRow, 'id' | 'created_at'> & { id?: string; created_at?: string };
         Update: Partial<ContactMessageRow>;
+      };
+      reviews: {
+        Row: ReviewRow;
+        Insert: ReviewInsert;
+        Update: ReviewUpdate;
       };
     };
     Functions: Record<string, never>;
@@ -1806,4 +1849,148 @@ export async function getResumeSignedUrl(
 
   if (error) return { url: null, error: { message: error.message } };
   return { url: data?.signedUrl ?? null, error: null };
+}
+
+// ─── Reviews ─────────────────────────────────────────────────────────────────
+
+/** True when the query failed because the table has not been created yet.
+ *
+ *  The review feature ships as code first and as a migration second, so there
+ *  is a window where the app runs against a database without `reviews`. In
+ *  that window the home page must fall back to the built-in testimonials
+ *  rather than showing an error — the page is public and must never look
+ *  broken because an operator has not pasted a file yet.
+ */
+export function isMissingTable(message: string | undefined): boolean {
+  if (!message) return false;
+  return (
+    message.includes('42P01') ||
+    message.includes('Could not find the table') ||
+    message.includes('does not exist')
+  );
+}
+
+export interface ReviewInput {
+  userId: string;
+  customerName: string;
+  location?: string;
+  rating: number;
+  quote: string;
+  service?: string;
+  bookingId?: string | null;
+}
+
+/** Newest visible reviews. `limit` keeps the home page to a row of three. */
+export async function fetchReviews(options?: {
+  limit?: number;
+  includeHidden?: boolean;
+}): Promise<{ data: ReviewRow[]; error: { message: string } | null }> {
+  const limit = options?.limit;
+
+  let query = supabase
+    .from('reviews')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!options?.includeHidden) query = query.eq('is_hidden', false);
+  if (limit) query = query.limit(limit);
+
+  const { data, error } = await query;
+  if (error) return { data: [], error: { message: error.message } };
+  return { data: (data ?? []) as ReviewRow[], error: null };
+}
+
+/** The signed-in customer's own reviews, hidden ones included. */
+export async function fetchMyReviews(
+  userId: string
+): Promise<{ data: ReviewRow[]; error: { message: string } | null }> {
+  const { data, error } = await supabase
+    .from('reviews')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (error) return { data: [], error: { message: error.message } };
+  return { data: (data ?? []) as ReviewRow[], error: null };
+}
+
+export async function createReview(
+  input: ReviewInput
+): Promise<{ data: ReviewRow | null; error: { message: string } | null }> {
+  // The builder is cast because this project's `Database` type does not
+  // declare `Views`/`Relationships`, so postgrest-js resolves every table's
+  // Insert type to `never` — the same reason the booking insert at line ~1315
+  // is cast. Reads stay typed through the `Row` entries.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.from('reviews') as any)
+    .insert({
+      user_id: input.userId,
+      booking_id: input.bookingId ?? null,
+      customer_name: input.customerName.trim(),
+      location: input.location?.trim() || null,
+      rating: input.rating,
+      quote: input.quote.trim(),
+      service: input.service?.trim() || null,
+      // `verified` is deliberately NOT sent. It is derived by a database
+      // trigger from the booking: a browser could otherwise claim it, which
+      // would make the badge meaningless. See deploy/18_REVIEWS.sql.
+    })
+    .select('*')
+    .single();
+
+  if (error) return { data: null, error: { message: error.message } };
+  return { data: data as ReviewRow, error: null };
+}
+
+export async function updateReview(
+  id: string,
+  patch: { rating?: number; quote?: string; service?: string; location?: string }
+): Promise<{ error: { message: string } | null }> {
+  // `.select('id')` makes a zero-row update observable. Without it PostgREST
+  // answers 200 whether the row changed or an RLS policy filtered it out.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.from('reviews') as any)
+    .update(patch)
+    .eq('id', id)
+    .select('id');
+
+  if (error) return { error: { message: error.message } };
+  if (!data || data.length === 0) {
+    return { error: { message: 'That review could not be updated — it may not be yours.' } };
+  }
+  return { error: null };
+}
+
+export async function deleteReview(
+  id: string
+): Promise<{ error: { message: string } | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.from('reviews') as any)
+    .delete()
+    .eq('id', id)
+    .select('id');
+
+  if (error) return { error: { message: error.message } };
+  if (!data || data.length === 0) {
+    return { error: { message: 'That review could not be deleted — it may already be gone.' } };
+  }
+  return { error: null };
+}
+
+/** Admin moderation. The database trigger refuses this for anyone else. */
+export async function setReviewHidden(
+  id: string,
+  hidden: boolean
+): Promise<{ error: { message: string } | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase.from('reviews') as any)
+    .update({ is_hidden: hidden })
+    .eq('id', id)
+    .select('id');
+
+  if (error) return { error: { message: error.message } };
+  if (!data || data.length === 0) {
+    return { error: { message: 'That review could not be changed — admin permission is required.' } };
+  }
+  return { error: null };
 }

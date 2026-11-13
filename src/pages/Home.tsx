@@ -1,13 +1,14 @@
-import { useState, useEffect, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, Star, CheckCircle2, ChevronDown, ChevronUp,
-  Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare,
-  CalendarDays, Check,
+  Shield, Clock, Award, Leaf, Phone, MapPin, MessageSquare, X,
 } from 'lucide-react';
-import logoImg from '../imports/image-3.png';
 import { useCurrentUser } from '../store';
-import AuthPromptModal from '../components/AuthPromptModal';
+import Logo from '../components/Logo';
+import logoOnLight from '../imports/logo-onlight.png';
+import ReviewCard from '../components/ReviewCard';
+import { fetchReviews, isMissingTable, type ReviewRow } from '../lib/supabase';
 
 /* ─── image constants ─────────────────────────────────────────── */
 const IMG = {
@@ -42,9 +43,9 @@ const SERVICES = [
 ];
 
 const TESTIMONIALS = [
-  { name: 'Angel Reyes', location: 'San Juan City, Metro Manila', rating: 5, quote: "Luxurious Cleaning Co. transformed my penthouse. The team is meticulous, discreet, and professional. I've never trusted anyone else with my home.", service: 'Gold Member — Bi-Weekly' },
-  { name: 'Mark Villanueva', location: 'Makati City, Metro Manila', rating: 5, quote: "After renovation, I expected weeks of dust. The post-construction team had our home looking perfect within a single day. Absolutely remarkable.", service: 'Post-Construction' },
-  { name: 'Sofia Mendoza', location: 'Quezon City, Metro Manila', rating: 5, quote: "The real-time updates and photos through the portal give me complete peace of mind while I travel. Worth every penny.", service: 'Silver Member — Weekly' },
+  { name: 'Catherine Liu', location: 'Yorkville, Toronto', rating: 5, quote: "Luxurious Cleaning Co. transformed my penthouse. The team is meticulous, discreet, and professional. I've never trusted anyone else with my home.", service: 'Gold Member — Bi-Weekly' },
+  { name: 'David Okonkwo', location: 'Forest Hill, Toronto', rating: 5, quote: "After renovation, I expected weeks of dust. The post-construction team had our home looking perfect within a single day. Absolutely remarkable.", service: 'Post-Construction' },
+  { name: 'Marina Petrov', location: 'Rosedale, Toronto', rating: 5, quote: "The real-time updates and photos through the portal give me complete peace of mind while I travel. Worth every penny.", service: 'Silver Member — Weekly' },
 ];
 
 const FAQS = [
@@ -87,7 +88,10 @@ function PhoneMockup() {
           <div className="px-3 py-2.5 flex-1 overflow-hidden">
             {/* Logo + name */}
             <div className="flex items-center gap-2 mb-1.5">
-              <img src={logoImg} alt="Luxurious Cleaning Co." className="w-10 h-10 object-contain rounded-full shrink-0" />
+              {/* The mockup's screen is white in BOTH themes, so this is the
+                  on-light wordmark explicitly — not the theme-driven Logo,
+                  which would show the white version here in dark mode. */}
+              <img src={logoOnLight} alt="Luxurious Cleaning Co." className="w-10 h-10 object-contain rounded-full shrink-0" />
               <div>
                 <div className="text-[10px] font-bold text-gray-900 leading-tight">Luxurious Cleaning Co.</div>
                 <div className="text-[8px] text-gray-500">Cleaning service</div>
@@ -108,15 +112,15 @@ function PhoneMockup() {
             </div>
 
             {/* Book Now button */}
-            <div className="bg-[#1a73e8] text-white text-[9px] font-bold py-1.5 rounded-sm mb-2 flex items-center justify-center gap-1">
-              <CalendarDays size={10} strokeWidth={2.5} /> Book Now
+            <div className="bg-[#1a73e8] text-white text-[9px] font-bold text-center py-1.5 rounded-sm mb-2">
+              📅 Book Now
             </div>
 
             {/* Info rows */}
             <div className="space-y-1">
               {[
-                { icon: <MapPin size={7} />, text: 'San Juan City, Metro Manila' },
-                { icon: <Phone size={7} />, text: '0919 002 4136' },
+                { icon: <MapPin size={7} />, text: 'Toronto, Ontario' },
+                { icon: <Phone size={7} />, text: '+1 416-555-LUXE' },
                 { icon: <MessageSquare size={7} />, text: '"Always on time, always perfect."' },
               ].map((row, i) => (
                 <div key={i} className="flex items-start gap-1.5 text-[7px] text-gray-500">
@@ -155,12 +159,7 @@ function FeatureBlock({
   amber,
   darkText,
 }: {
-  // A node, not a string. This used to take an emoji character — the last five
-  // emoji on the site were all passed through here and through the Book Now
-  // badge. Emoji render differently on every OS, cannot inherit a colour, and
-  // read as decoration rather than as a business's own icon set. These are
-  // lucide icons now, which do all three.
-  icon: ReactNode;
+  icon: string;
   title: string;
   amber?: boolean;
   darkText?: boolean;
@@ -174,14 +173,21 @@ function FeatureBlock({
       ? 'bg-[#FCB316]'
       : 'bg-[#1E1B16]/90 backdrop-blur-sm';
 
+  // On a phone the three blocks sit side by side only if they are short.
+  // Stacked full-width (the previous grid-cols-1) they grew to ~330px, which
+  // is taller than the space the hero reserves for them — so they covered the
+  // paragraph above. Laying each one out HORIZONTALLY on mobile (icon beside
+  // the label instead of above it) keeps the row under ~70px and lets all
+  // three fit without touching the text. From sm upward the original vertical
+  // block returns unchanged.
   return (
     <div
-      className={`px-7 py-6 flex flex-col gap-3 ${bg} border-r border-[#0E0C09] last:border-r-0`}
+      className={`px-5 py-4 sm:px-7 sm:py-6 flex items-center gap-4 sm:flex-col sm:items-start sm:gap-3 ${bg} border-b sm:border-b-0 sm:border-r border-[#0E0C09] last:border-b-0 last:border-r-0`}
     >
-      <div className={textColor}>{icon}</div>
+      <div className="text-2xl sm:text-3xl shrink-0">{icon}</div>
 
       <p
-        className={`font-display font-black text-base uppercase leading-tight tracking-wide ${textColor} whitespace-pre-line`}
+        className={`font-display font-black text-sm sm:text-base uppercase leading-tight tracking-wide ${textColor} whitespace-pre-line`}
       >
         {title}
       </p>
@@ -195,12 +201,42 @@ export default function Home() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [hasAnimated, setHasAnimated] = useState(false);
+  const [reviews, setReviews] = useState<ReviewRow[]>([]);
   const user = useCurrentUser();
+  const navigate = useNavigate();
 
   // Trigger entrance animations on mount
   useEffect(() => {
     setHasAnimated(true);
   }, []);
+
+  // The newest three reviews, written by customers in the portal.
+  //
+  // Failure is not an error state here. This is the landing page: if the
+  // reviews table has not been created yet, or the network is slow, the
+  // built-in testimonials below still render. A visitor must never see an
+  // empty "Client Reviews" heading or a spinner where social proof belongs.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await fetchReviews({ limit: 3 });
+      if (cancelled) return;
+      if (error) {
+        if (!isMissingTable(error.message)) {
+          console.error('[Home] reviews:', error.message);
+        }
+        return;
+      }
+      setReviews(data);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const hasLiveReviews = reviews.length > 0;
 
   function handleLandingInteraction(event: React.MouseEvent<HTMLDivElement>) {
     if (user) return;
@@ -212,14 +248,60 @@ export default function Home() {
   }
 
   return (
-    <div className="pt-16" data-surface="home" onClickCapture={handleLandingInteraction}>
-      <AuthPromptModal open={authPromptOpen} onClose={() => setAuthPromptOpen(false)} />
+    <div className="pt-16" onClickCapture={handleLandingInteraction}>
+      {authPromptOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-5 backdrop-blur-sm"
+          onClick={() => setAuthPromptOpen(false)}
+          data-auth-exempt
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auth-prompt-title"
+            className="relative w-full max-w-md rounded-2xl border border-gold-400/30 bg-navy-900 px-7 py-8 text-center shadow-2xl"
+            onClick={event => event.stopPropagation()}
+            data-auth-exempt
+          >
+            <button
+              type="button"
+              aria-label="Close sign in prompt"
+              onClick={() => setAuthPromptOpen(false)}
+              className="absolute right-4 top-4 text-cream-300 hover:text-cream-100"
+              data-auth-exempt
+            >
+              <X size={18} />
+            </button>
+            <Logo height={48} align="center" className="mb-5" />
+            <h2 id="auth-prompt-title" className="font-serif text-2xl text-cream-100 mb-2">Welcome to Luxurious Cleaning Co.</h2>
+            <p className="text-sm leading-relaxed text-cream-300 mb-7">Please sign in to continue, or create an account to get started.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/login')}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gold-400 px-4 py-3 text-sm font-semibold text-navy-950 transition-colors hover:bg-gold-300"
+                data-auth-exempt
+              >
+                Log In 
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/login?mode=register')}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-gold-400/40 px-4 py-3 text-sm font-semibold text-gold-400 transition-colors hover:bg-gold-400/10"
+                data-auth-exempt
+              >
+                Sign Up 
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══ HERO ══════════════════════════════════════════════════ */}
-      {/* data-over-photo: this block sits on a scrimmed photograph, so in the
-          light theme its text keeps its light ink while the page around it
-          inverts. See the light-theme section in index.css. */}
-      <section className="relative min-h-screen flex flex-col" data-over-photo>
+      {/* 100svh, not 100vh: on a phone vh is measured with the browser
+          chrome hidden, so a 100vh hero is taller than the screen the user
+          can actually see and the bottom edge jumps as the bar collapses. */}
+      <section className="relative min-h-[100svh] flex flex-col">
 
         {/* Background photo — cleaners at work, heavily darkened */}
         <div className="absolute inset-0">
@@ -235,7 +317,7 @@ export default function Home() {
         </div>
 
         {/* Main content grid */}
-        <div className="relative flex-1 max-w-4xl mx-auto w-full px-6 sm:px-8 lg:px-12 flex items-center justify-center py-16 pb-16 sm:pb-32">
+        <div className="relative flex-1 max-w-4xl mx-auto w-full px-6 sm:px-8 lg:px-12 flex items-center justify-center py-16 pb-10 sm:pb-32">
 
           {/* Centered headline and call-to-action */}
           <div className="text-center">
@@ -264,7 +346,11 @@ export default function Home() {
              Luxurious Cleaning Co. is a cleaning service company that gained trust and strong pool of clients for its hotel-like cleaning services. We offer a luxurious approach in deep cleaning your home or workplace to help maintain a healthy and clean premises.
             </p>
 
-            {/* CTA row */}
+            {/* CTA row — deliberately not rendered. The landing page opens the
+                sign-in prompt on any click, so a "Book a Service" button here
+                would be a dead end: the visitor is told to sign in before they
+                have seen a price. Kept in the source so it is one edit away.
+
             <div className={`flex flex-wrap justify-center gap-3 transition-all duration-700 delay-700 ${hasAnimated ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
               <Link
                 to="/book"
@@ -279,54 +365,42 @@ export default function Home() {
                 Our Services
               </Link>
             </div>
+            */}
 
             {/* Trust badges */}
             <div className={`flex items-center justify-center gap-5 mt-8 mb-10 transition-all duration-700 delay-1000 ${hasAnimated ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
               {[
-                { v: '2,400+', l: 'Cleanings', star: false },
-                { v: '98%', l: 'Satisfaction', star: false },
-                { v: '5', l: 'Rating', star: true },
+                { v: '2,400+', l: 'Cleanings' },
+                { v: '98%', l: 'Satisfaction' },
+                { v: '5★', l: 'Rating' },
               ].map(b => (
                 <div key={b.l} className="text-center">
-                  <div className="font-display font-black text-xl text-[#F5A623] flex items-center justify-center gap-1">
-                    <span className="num">{b.v}</span>
-                    {b.star ? <Star size={14} className="fill-current" strokeWidth={0} /> : null}
-                  </div>
-                  <div className="text-[9px] text-[#8A847D] uppercase tracking-wider">{b.l}</div>
+                  <div className="font-display font-black text-xl text-[#F5A623]">{b.v}</div>
+                  <div className="text-[10px] text-[#8A847D] uppercase tracking-wider">{b.l}</div>
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        {/*
-          Bottom feature strip — pinned to the bottom of the hero like the reference,
-          but ONLY where the three blocks sit side by side.
-
-          Below sm: the grid collapses to one column, which makes the strip ~410px
-          tall. Pinned absolutely at that height it covered the hero's own content:
-          the whole "Book a Service" / "Our Services" row and the trust badges, and
-          on a 320px-wide phone the last 33px of the paragraph too. The primary
-          call to action was invisible and unclickable on every phone.
-
-          So on mobile it sits in normal flow, below the content. From sm: up the
-          strip is only ~136px tall and the overlay is restored unchanged.
-        */}
+        {/* Bottom feature strip — pinned to the bottom from sm upward.
+            On mobile it stays in normal flow, AFTER the text, so it can
+            never sit on top of the paragraph. */}
        <div className="relative sm:absolute sm:bottom-0 sm:left-0 sm:right-0">
   <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#0E0C09]">
     <FeatureBlock
-      icon={<Clock size={30} strokeWidth={1.75} />}
+      icon="⏱️"
       title={"Save Your\nTeam & Money"}
     />
 
     <FeatureBlock
-      icon={<Leaf size={30} strokeWidth={1.75} />}
+      icon="🫧"
       title={"Clean &\nHealthy Environment"}
       amber
     />
 
     <FeatureBlock
-      icon={<Award size={30} strokeWidth={1.75} />}
+      icon="🏅"
       title={"Highly Trained\n& Professional"}
       darkText
     />
@@ -347,7 +421,7 @@ export default function Home() {
                 Our <span className="text-[#F5A623]">Services</span>
               </h2>
             </div>
-            <Link to="/services" className="flex items-center gap-2 text-[#F5A623] hover:text-[#fbbf4a] text-xs font-black uppercase tracking-widest transition-colors">
+            <Link to="/services" className="flex items-center gap-2 py-3 sm:py-0 text-[#F5A623] hover:text-[#fbbf4a] text-xs font-black uppercase tracking-widest transition-colors">
               View All Services <ArrowRight size={13} />
             </Link>
           </div>
@@ -364,17 +438,11 @@ export default function Home() {
                   backgroundPosition: 'center',
                 }}
               >
-                {/*
-                  Zoom layer FIRST, then the scrim.
-
-                  An absolutely positioned sibling that comes LATER in the DOM
-                  paints on top. While the dark overlay sat BEFORE this layer,
-                  this layer (a full copy of the same photograph, at inset-0)
-                  covered it completely — so the overlay did nothing at all and
-                  the labels were white text on a full-brightness photo. That is
-                  why they were unreadable, not because of their colour.
-                */}
-                <div
+                {/* Dark overlay */}
+                <div className="absolute inset-0 bg-black/50 group-hover:bg-black/60 transition-colors duration-300" />
+                
+                {/* Zoom effect layer */}
+                <div 
                   className="absolute inset-0 transition-transform duration-500 group-hover:scale-110"
                   style={{
                     backgroundImage: `url(${service.img})`,
@@ -382,24 +450,11 @@ export default function Home() {
                     backgroundPosition: 'center',
                   }}
                 />
-
-                {/* Scrim — flat, plus extra weight at the bottom where the label
-                    sits. A flat 50% alone is not enough: a white kitchen at 50%
-                    still leaves 12px white text at roughly 3.9:1, under the
-                    4.5:1 it needs. The bottom gradient takes the label's own
-                    strip to about 15:1 without dimming the top of the photo. */}
-                <div className="absolute inset-0 bg-black/50 group-hover:bg-black/60 transition-colors duration-300" />
-                <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-
+                
                 {/* Amber bottom bar on hover */}
                 <div className="absolute inset-x-0 bottom-0 h-1 bg-[#F5A623] scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left z-20" />
                 <div className="absolute inset-0 flex flex-col justify-end p-4 z-10">
-                  {/* Autumn yellow, not white. White on a photograph competes
-                      with whatever is bright in the picture; the brand gold is
-                      a colour no photo in this set contains, so it separates on
-                      hue even where the photo is pale. Hover goes lighter
-                      rather than changing colour, so the label stays gold. */}
-                  <h3 className="font-display font-black text-xs uppercase tracking-wide text-[#F5A623] leading-tight group-hover:text-[#fbbf4a] transition-colors">
+                  <h3 className="font-display font-black text-xs uppercase tracking-wide text-white leading-tight group-hover:text-[#F5A623] transition-colors">
                     {service.name}
                   </h3>
                 </div>
@@ -502,8 +557,8 @@ export default function Home() {
             </div>
             <div className="relative overflow-hidden rounded-2xl group">
               <img src={IMG.afterClean} alt="After cleaning" className="w-full h-80 object-cover brightness-100 group-hover:brightness-110 transition-all duration-500" />
-              <div className="absolute top-4 left-4 bg-[#F5A623] text-[#1C1612] text-xs font-black tracking-[0.2em] uppercase px-4 py-2 rounded flex items-center gap-1.5">
-                AFTER <Check size={13} strokeWidth={3.5} />
+              <div className="absolute top-4 left-4 bg-[#F5A623] text-[#1C1612] text-xs font-black tracking-[0.2em] uppercase px-4 py-2 rounded">
+                AFTER ✓
               </div>
             </div>
           </div>
@@ -541,10 +596,7 @@ export default function Home() {
                 { tier: 'Gold', bg: 'bg-[#F5A623]', badge: 'text-[#1C1612]', dark: true, perks: ['All Silver', 'Urgent cleans', 'Exclusive services', 'Premium support'] },
               ].map(plan => (
                 <div key={plan.tier} className={`${plan.bg} p-6`}>
-                  {/* data-tier-ink only where the surface under it flips. The Gold
-                      card stays gold in both themes, so its dark label is already
-                      correct and needs no hook. */}
-                  <span data-tier-ink={plan.dark ? undefined : plan.tier.toLowerCase()} className={`text-[10px] font-black uppercase tracking-wider mb-4 block ${plan.badge}`}>{plan.tier}</span>
+                  <span className={`text-[10px] font-black uppercase tracking-wider mb-4 block ${plan.badge}`}>{plan.tier}</span>
                   <ul className="space-y-2">
                     {plan.perks.map(p => (
                       <li key={p} className={`flex items-start gap-1.5 text-[11px] leading-tight ${plan.dark ? 'text-[#1C1612]' : 'text-[#C5BEB5]'}`}>
@@ -561,6 +613,10 @@ export default function Home() {
       </section>
 
       {/* ══ TESTIMONIALS ══════════════════════════════════════════ */}
+      {/*  Live reviews when there are any, the built-in three when there are
+          not. The fallback is not decoration: a brand-new deployment has no
+          reviews yet, and a landing page with an empty reviews section reads
+          as "nobody has ever used this". */}
       <section className="py-24 bg-[#141210]">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-center mb-12">
@@ -574,27 +630,44 @@ export default function Home() {
             </h2>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-4">
-            {TESTIMONIALS.map((t, i) => (
-              <div
-                key={t.name}
-                className={`rounded-2xl p-7 ${i === 1 ? 'bg-[#F5A623]' : 'bg-[#1C1916] border border-[#F5A623]/10'}`}
-              >
-                <div className="flex gap-0.5 mb-4">
-                  {[...Array(t.rating)].map((_, j) => (
-                    <Star key={j} size={12} className={i === 1 ? 'fill-[#1C1612] text-[#1C1612]' : 'fill-[#F5A623] text-[#F5A623]'} />
-                  ))}
+          {hasLiveReviews ? (
+            <div className="grid md:grid-cols-3 gap-4">
+              {reviews.map((review, i) => (
+                <ReviewCard key={review.id} review={review} featured={i === 1} />
+              ))}
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-4">
+              {TESTIMONIALS.map((t, i) => (
+                <div
+                  key={t.name}
+                  className={`rounded-2xl p-7 ${i === 1 ? 'bg-[#F5A623]' : 'bg-[#1C1916] border border-[#F5A623]/10'}`}
+                >
+                  <div className="flex gap-0.5 mb-4">
+                    {[...Array(t.rating)].map((_, j) => (
+                      <Star key={j} size={12} className={i === 1 ? 'fill-[#1C1612] text-[#1C1612]' : 'fill-[#F5A623] text-[#F5A623]'} />
+                    ))}
+                  </div>
+                  <blockquote className={`font-serif italic text-sm leading-relaxed mb-5 ${i === 1 ? 'text-[#2A2010]' : 'text-[#D0C9B8]'}`}>
+                    "{t.quote}"
+                  </blockquote>
+                  <div>
+                    <div className={`text-xs font-black uppercase tracking-wide ${i === 1 ? 'text-[#1C1612]' : 'text-white'}`}>{t.name}</div>
+                    <div className={`text-[10px] mt-0.5 ${i === 1 ? 'text-[#2A2010]' : 'text-[#8A847D]'}`}>{t.location}</div>
+                    <div className={`text-[10px] mt-1 font-semibold ${i === 1 ? 'text-[#1C1612]' : 'text-[#F5A623]'}`}>{t.service}</div>
+                  </div>
                 </div>
-                <blockquote className={`font-serif italic text-sm leading-relaxed mb-5 ${i === 1 ? 'text-[#2A2010]' : 'text-[#D0C9B8]'}`}>
-                  "{t.quote}"
-                </blockquote>
-                <div>
-                  <div className={`text-xs font-black uppercase tracking-wide ${i === 1 ? 'text-[#1C1612]' : 'text-white'}`}>{t.name}</div>
-                  <div className={`text-[10px] mt-0.5 ${i === 1 ? 'text-[#2A2010]' : 'text-[#8A847D]'}`}>{t.location}</div>
-                  <div className={`text-[10px] mt-1 font-semibold ${i === 1 ? 'text-[#1C1612]' : 'text-[#F5A623]'}`}>{t.service}</div>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+
+          <div className="text-center mt-10">
+            <Link
+              to="/reviews"
+              className="inline-flex items-center gap-2 py-3 px-4 text-[#F5A623] hover:text-[#fbbf4a] text-xs font-black uppercase tracking-widest transition-colors"
+            >
+              Read all reviews <ArrowRight size={13} />
+            </Link>
           </div>
         </div>
       </section>
@@ -617,9 +690,7 @@ export default function Home() {
           <div className="grid md:grid-cols-2 overflow-hidden rounded-2xl border border-[#F5A623]/15">
             <div className="relative">
               <img src={IMG.commercial} alt="Commercial cleaning" className="w-full h-full min-h-[300px] object-cover brightness-40" />
-              {/* data-over-photo: the wordmark sits on a brightness-40 photo, so
-                  it stays white in both themes. */}
-              <div className="absolute inset-0 flex flex-col justify-center px-10" data-over-photo>
+              <div className="absolute inset-0 flex flex-col justify-center px-10">
                 <div className="font-display font-black text-5xl text-white uppercase leading-tight">B2B</div>
                 <div className="font-display font-black text-5xl text-[#F5A623] uppercase leading-tight">Partner</div>
                 <div className="font-display font-black text-5xl text-white uppercase leading-tight">Program</div>
@@ -703,7 +774,7 @@ export default function Home() {
               Book a Service <ArrowRight size={14} />
             </Link>
             <a
-              href="tel:09190024136"
+              href="tel:+14165550001"
               className="flex items-center gap-2 border-2 border-[#1C1612]/30 hover:border-[#1C1612] text-[#1C1612] text-xs font-black uppercase tracking-widest px-8 py-4 rounded-lg transition-colors"
             >
               <Phone size={13} />Call Us
