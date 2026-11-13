@@ -174,12 +174,25 @@ export default function PartnerPortal() {
     );
   }
 
-  // Submit is withdrawn while the partnership is not active — there is nothing
-  // to submit into. Defined once so the tab bar and the header button agree.
+  // One badge, one source of truth. A partnership that has ended is not
+  // "Approved", and a rejected application is not "Submitted" — the label has
+  // to name the state that is actually in the database, not the state the
+  // application was last seen in.
+  const partnershipBadge =
+    standing === 'terminated' ? { label: 'Ended', tone: 'text-red-400 bg-red-400/10 border-red-400/20' }
+    : standing === 'inactive' ? { label: 'Inactive', tone: 'text-amber-400 bg-amber-400/10 border-amber-400/20' }
+    : myApp.status === 'approved' ? { label: 'Approved', tone: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' }
+    : myApp.status === 'under_review' ? { label: 'Under Review', tone: 'text-amber-400 bg-amber-400/10 border-amber-400/20' }
+    : myApp.status === 'rejected' ? { label: 'Rejected', tone: 'text-red-400 bg-red-400/10 border-red-400/20' }
+    : { label: 'Submitted', tone: 'text-blue-400 bg-blue-400/10 border-blue-400/20' };
+
+  // The Submit tab stays on the bar even when the partnership is stood down.
+  // A tab that vanishes reads as a bug, and the form is still worth reading.
+  // The fields are disabled instead, and the notice above the panel says why.
   const tabs: Array<{ key: typeof tab; label: string; count?: number }> = [
     { key: 'overview', label: 'Overview' },
     { key: 'projects', label: 'Projects', count: myProjects.length },
-    ...(standing ? [] : [{ key: 'submit' as const, label: 'Submit Project' }]),
+    { key: 'submit', label: 'Submit Project' },
     { key: 'notifications', label: 'Notifications', count: unread },
     { key: 'security', label: 'Security' },
   ];
@@ -194,13 +207,8 @@ export default function PartnerPortal() {
             <div>
               <h1 className="font-serif text-3xl text-cream-100">{myApp.companyName}</h1>
               <div className="flex items-center gap-2 mt-1">
-                <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${
-                  myApp.status === 'approved' ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
-                  : myApp.status === 'under_review' ? 'text-amber-400 bg-amber-400/10 border-amber-400/20'
-                  : myApp.status === 'rejected' ? 'text-red-400 bg-red-400/10 border-red-400/20'
-                  : 'text-blue-400 bg-blue-400/10 border-blue-400/20'
-                }`}>
-                  Partnership: {myApp.status === 'approved' ? 'Approved' : myApp.status === 'under_review' ? 'Under Review' : 'Submitted'}
+                <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${partnershipBadge.tone}`}>
+                  Partnership: {partnershipBadge.label}
                 </span>
               </div>
             </div>
@@ -260,7 +268,7 @@ export default function PartnerPortal() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 min-h-[36rem]">
-        {standingNotice && (
+        {standingNotice && tab !== 'overview' && (
           <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-400/25 bg-amber-400/5 p-5">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
             <div>
@@ -271,6 +279,34 @@ export default function PartnerPortal() {
         )}
         {tab === 'overview' && (
           <div className="space-y-6">
+            {/* The status card follows the partnership, not the application.
+                Once the company is stood down, "Partnership Approved" would be
+                a claim the database no longer makes. It sits first, and the
+                page-level notice is suppressed on this tab, so the same
+                paragraph is never printed twice on one screen. */}
+            {myApp.status === 'approved' && (
+              standing ? (
+                <div className={`rounded-xl border p-5 ${
+                  standing === 'terminated' ? 'border-red-400/20 bg-red-400/5' : 'border-amber-400/20 bg-amber-400/5'
+                }`}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <AlertTriangle size={18} className={standing === 'terminated' ? 'text-red-400' : 'text-amber-400'} />
+                    <h3 className="text-sm font-semibold text-cream-100">{STANDING_NOTICE[standing].title}</h3>
+                  </div>
+                  <p className="text-sm text-cream-300">{STANDING_NOTICE[standing].body}</p>
+                </div>
+              ) : (
+                <div className="bg-emerald-400/5 border border-emerald-400/20 rounded-xl p-5">
+                  <div className="flex items-center gap-3 mb-3">
+                    <CheckCircle2 size={18} className="text-emerald-400" />
+                    <h3 className="text-sm font-semibold text-cream-100">Partnership Approved</h3>
+                  </div>
+                  <p className="text-sm text-cream-300">
+                    Your partnership is active. You can submit cleaning projects through the "Submit Project" tab. Our team will review each submission and reach out with a quote and schedule.
+                  </p>
+                </div>
+              )
+            )}
             <div className="bg-navy-800 border border-gold-400/15 rounded-xl p-6">
               <h3 className="font-serif text-xl text-cream-100 mb-4">Partnership Information</h3>
               <div className="grid md:grid-cols-2 gap-4">
@@ -290,17 +326,6 @@ export default function PartnerPortal() {
                 ))}
               </div>
             </div>
-            {myApp.status === 'approved' && !standing && (
-              <div className="bg-emerald-400/5 border border-emerald-400/20 rounded-xl p-5">
-                <div className="flex items-center gap-3 mb-3">
-                  <CheckCircle2 size={18} className="text-emerald-400" />
-                  <h3 className="text-sm font-semibold text-cream-100">Partnership Approved</h3>
-                </div>
-                <p className="text-sm text-cream-300">
-                  Your partnership is active. You can submit cleaning projects through the "Submit Project" tab. Our team will review each submission and reach out with a quote and schedule.
-                </p>
-              </div>
-            )}
           </div>
         )}
 
@@ -373,59 +398,71 @@ export default function PartnerPortal() {
 
         {tab === 'submit' && (
           <div className="max-w-2xl">
-            {standingNotice ? (
-              <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-5">
-                <h3 className="mb-2 text-sm font-semibold text-cream-100">{standingNotice.title}</h3>
-                <p className="text-sm text-cream-300">{standingNotice.body}</p>
-              </div>
-            ) : myApp.status !== 'approved' ? (
+            {myApp.status !== 'approved' ? (
               <div className="text-center py-10 text-cream-300">Your partnership must be approved before submitting projects.</div>
             ) : (
               <>
-                <h2 className="font-serif text-2xl text-cream-100 mb-6">Submit a New Project</h2>
+                <h2 className="font-serif text-2xl text-cream-100 mb-2">Submit a New Project</h2>
+                {standing && (
+                  <p className="mb-5 text-sm text-cream-300">
+                    This form is closed — your partnership is {standing === 'terminated' ? 'ended' : 'inactive'}, so the fields below cannot be filled in.
+                  </p>
+                )}
                 <form onSubmit={handleSubmitProject} className="space-y-4">
-                  <div>
-                    <label className="block text-xs text-cream-300 mb-1.5">Project Name *</label>
-                    <input required value={form.name} onChange={e => set('name', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" placeholder="e.g. Harbour Point Tower A" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-cream-300 mb-1.5">Project Address *</label>
-                    <input required value={form.address} onChange={e => set('address', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* One `disabled` on the fieldset switches off every control
+                      inside it, including fields added later — a per-input prop
+                      would be a list to forget. The dimming is aimed at the
+                      CONTROLS only: fading the whole fieldset also fades the
+                      labels, and a form you cannot read is not "still there".
+                      This is presentation only; the guard at the top of
+                      handleSubmitProject is what actually holds. */}
+                  <fieldset
+                    disabled={Boolean(standing)}
+                    className="m-0 min-w-0 space-y-4 border-0 p-0 [&_input:disabled]:cursor-not-allowed [&_input:disabled]:opacity-60 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:opacity-60"
+                  >
                     <div>
-                      <label className="block text-xs text-cream-300 mb-1.5">Project Size *</label>
-                      <input required value={form.size} onChange={e => set('size', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" placeholder="e.g. 45,000 sq ft" />
+                      <label className="block text-xs text-cream-300 mb-1.5">Project Name *</label>
+                      <input required value={form.name} onChange={e => set('name', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 disabled:cursor-not-allowed" placeholder="e.g. Harbour Point Tower A" />
                     </div>
                     <div>
-                      <label className="block text-xs text-cream-300 mb-1.5">Units / Floors</label>
-                      <input value={form.units} onChange={e => set('units', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" placeholder="e.g. 120 units, 32 floors" />
+                      <label className="block text-xs text-cream-300 mb-1.5">Project Address *</label>
+                      <input required value={form.address} onChange={e => set('address', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 disabled:cursor-not-allowed" />
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-cream-300 mb-1.5">Project Size *</label>
+                        <input required value={form.size} onChange={e => set('size', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 disabled:cursor-not-allowed" placeholder="e.g. 45,000 sq ft" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-cream-300 mb-1.5">Units / Floors</label>
+                        <input value={form.units} onChange={e => set('units', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 disabled:cursor-not-allowed" placeholder="e.g. 120 units, 32 floors" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-cream-300 mb-1.5">Expected Turnover Date</label>
+                        <input type="date" value={form.turnoverDate} onChange={e => set('turnoverDate', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 disabled:cursor-not-allowed" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-cream-300 mb-1.5">Preferred Cleaning Date *</label>
+                        <input required type="date" value={form.preferredDate} onChange={e => set('preferredDate', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 disabled:cursor-not-allowed" />
+                      </div>
+                    </div>
                     <div>
-                      <label className="block text-xs text-cream-300 mb-1.5">Expected Turnover Date</label>
-                      <input type="date" value={form.turnoverDate} onChange={e => set('turnoverDate', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" />
+                      <label className="block text-xs text-cream-300 mb-1.5">Cleaning Requirements *</label>
+                      <textarea required rows={4} value={form.requirements} onChange={e => set('requirements', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 resize-none disabled:cursor-not-allowed" placeholder="Describe the scope of cleaning required..." />
                     </div>
                     <div>
-                      <label className="block text-xs text-cream-300 mb-1.5">Preferred Cleaning Date *</label>
-                      <input required type="date" value={form.preferredDate} onChange={e => set('preferredDate', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40" />
+                      <label className="block text-xs text-cream-300 mb-1.5">Additional Instructions</label>
+                      <textarea rows={2} value={form.additionalInfo} onChange={e => set('additionalInfo', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 resize-none disabled:cursor-not-allowed" />
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-cream-300 mb-1.5">Cleaning Requirements *</label>
-                    <textarea required rows={4} value={form.requirements} onChange={e => set('requirements', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 resize-none" placeholder="Describe the scope of cleaning required..." />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-cream-300 mb-1.5">Additional Instructions</label>
-                    <textarea rows={2} value={form.additionalInfo} onChange={e => set('additionalInfo', e.target.value)} className="w-full bg-navy-800 border border-gold-400/15 rounded-lg px-4 py-2.5 text-sm text-cream-100 focus:outline-none focus:border-gold-400/40 resize-none" />
-                  </div>
+                  </fieldset>
                   <button
                     type="submit"
-                    disabled={submitting}
-                    className="w-full flex items-center justify-center gap-2 bg-gold-400 hover:bg-gold-300 text-navy-950 font-semibold py-3.5 rounded-lg transition-colors disabled:opacity-60"
+                    disabled={submitting || Boolean(standing)}
+                    className="w-full flex items-center justify-center gap-2 bg-gold-400 text-navy-950 font-semibold py-3.5 rounded-lg transition-colors enabled:hover:bg-gold-300 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {submitting ? 'Submitting…' : <>Submit Project <ArrowRight size={15} /></>}
+                    {submitting ? 'Submitting…' : standing ? 'Submissions Closed' : <>Submit Project <ArrowRight size={15} /></>}
                   </button>
                 </form>
               </>

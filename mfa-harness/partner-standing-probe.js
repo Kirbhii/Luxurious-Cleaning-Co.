@@ -8,9 +8,14 @@
 //
 //   1. a stood-down partner is TOLD, and told which of the two states it is —
 //      "inactive" reads as temporary, "no longer a partner" does not
-//   2. the submission path is actually closed. Hiding the button is
-//      presentation; the check inside the submit handler is what holds, so this
-//      probe drives the form directly and asserts no write leaves the browser.
+//   2. the badge says "Ended", not "Approved" — a status the admin changed must
+//      change the label, not leave a claim the database no longer makes
+//   3. the Submit tab STAYS and the form STAYS, but every field is disabled.
+//      Removing the tab read as a bug; a form you can read but not fill is the
+//      honest shape.
+//   4. the submission path is actually closed. Disabling the fields is
+//      presentation; this probe calls requestSubmit() directly, past the
+//      disabled button, so the guard inside the handler is what gets measured.
 //
 // Run twice, same code, opposite fixtures — that is the negative control:
 //   default          -> company terminated: banner shown, submit closed
@@ -192,37 +197,89 @@ async function setupMocks(context) {
 
   const bodyText = await page.locator('body').innerText().catch(() => '');
   const submitTabs = await page.locator('button', { hasText: 'Submit Project' }).count();
-  const reinstateBanner = /Partnership Ended/i.test(bodyText);
+  const standingBanner = /Partnership Ended/i.test(bodyText);
+  // The badge is the only place the colon appears; the overview card heading
+  // reads "Partnership Approved" without one, so this cannot match it.
+  const badge = await page.locator('span', { hasText: 'Partnership:' }).first().innerText().catch(() => '');
 
   record(
     ACTIVE_COMPANY
       ? 'an active partner sees no standing warning'
       : 'a stood-down partner is told, and told which state it is',
-    `banner = ${reinstateBanner}; body mentions "Partnership Ended" = ${/Partnership Ended/i.test(bodyText)}`,
-    ACTIVE_COMPANY ? !reinstateBanner : (reinstateBanner && /has ended/i.test(bodyText))
+    `banner = ${standingBanner}; body mentions "Partnership Ended" = ${/Partnership Ended/i.test(bodyText)}`,
+    ACTIVE_COMPANY ? !standingBanner : (standingBanner && /has ended/i.test(bodyText))
   );
 
   record(
     ACTIVE_COMPANY
-      ? 'an active partner still has the submission path'
-      : 'the submission path is withdrawn from the screen',
-    `"Submit Project" controls = ${submitTabs}`,
-    ACTIVE_COMPANY ? submitTabs > 0 : submitTabs === 0
+      ? 'the badge says Approved'
+      : 'the badge says Ended, not Approved',
+    `badge = "${badge.replace(/\s+/g, ' ').trim()}"`,
+    ACTIVE_COMPANY ? /Partnership:\s*Approved/i.test(badge) : /Partnership:\s*Ended/i.test(badge)
   );
 
-  // Now the part that matters: drive the form directly, ignoring the UI.
-  //
-  // In the ACTIVE case this proves the route is genuinely open — without it, a
-  // "0 writes" result below could just mean the probe never found the form. In
-  // the STOOD-DOWN case the form does not exist at all, so this measures "there
-  // is nothing to submit from". The in-handler guard is a second line of
-  // defence that the UI makes unreachable, so it is not exercised here.
-  if (ACTIVE_COMPANY) {
-    await page.locator('button', { hasText: 'Submit Project' }).first().click({ timeout: 8000 });
-    await page.waitForTimeout(1200);
-  }
+  // The page notice and the status card carry the same paragraph. Printing it
+  // twice on one screen reads as a bug even when both copies are true, so
+  // exactly one of them may be on screen.
+  const endedMentions = (bodyText.match(/Partnership Ended/gi) || []).length;
+  record(
+    ACTIVE_COMPANY
+      ? 'no standing block is printed at all'
+      : 'the standing notice appears exactly once on the overview',
+    `"Partnership Ended" occurrences = ${endedMentions}`,
+    ACTIVE_COMPANY ? endedMentions === 0 : endedMentions === 1
+  );
+
+  // The tab stays on the bar in both cases — it is no longer a way of hiding
+  // the submission path, so its presence is not a pass/fail signal on its own.
+  record(
+    'the Submit tab stays on the bar',
+    `"Submit Project" controls on load = ${submitTabs}`,
+    submitTabs > 0
+  );
+
+  // Open the form in both cases. In the ACTIVE case this proves the route is
+  // genuinely open — without it, a "0 writes" result below could just mean the
+  // probe never found the form.
+  await page.locator('button', { hasText: 'Submit Project' }).first().click({ timeout: 8000 });
+  await page.waitForTimeout(1200);
 
   const formReachable = await page.locator('form').count();
+  const totalFields = await page.locator('form input, form textarea, form select').count();
+  // `:disabled`, not `[disabled]`. The fields carry no disabled attribute of
+  // their own — they are switched off by the disabled <fieldset> around them,
+  // and only the pseudo-class knows that. Counting the attribute reports "8
+  // enabled" on a form that cannot be typed into.
+  const enabledFields = await page
+    .locator('form input:not(:disabled), form textarea:not(:disabled), form select:not(:disabled)')
+    .count();
+
+  // And the effect itself: try to type. A field that refuses input is the thing
+  // being claimed, so measure that rather than a class name.
+  let typed = '(no field)';
+  if (totalFields > 0) {
+    const first = page.locator('form input').first();
+    try {
+      await first.fill('probe', { timeout: 1500 });
+      typed = await first.inputValue();
+    } catch {
+      typed = '(refused)';
+    }
+  }
+
+  record(
+    ACTIVE_COMPANY
+      ? 'the form is readable and fillable'
+      : 'the form is still there, but no field can be filled in',
+    `forms = ${formReachable}; fields = ${totalFields}; enabled = ${enabledFields}; typing gave "${typed}"`,
+    ACTIVE_COMPANY
+      ? formReachable === 1 && totalFields > 0 && enabledFields === totalFields && typed === 'probe'
+      : formReachable === 1 && totalFields > 0 && enabledFields === 0 && typed === '(refused)'
+  );
+
+  // Now the part that matters: submit the form directly, past the disabled
+  // button and the disabled fieldset. Only the guard inside the handler is
+  // left standing — which is exactly what this is meant to measure.
   if (formReachable > 0) {
     await page.locator('form').first().evaluate((f) => {
       // Turn off constraint validation for the whole form. Clearing `required`
@@ -240,9 +297,9 @@ async function setupMocks(context) {
   record(
     ACTIVE_COMPANY
       ? 'submitting from an active partner reaches the database'
-      : 'a stood-down partner has no form to submit from, and nothing was written',
+      : 'a forced submit from a stood-down partner writes nothing',
     `forms on screen = ${formReachable}; partner_projects writes = ${counts.projectWrites}; requests = ${seen.join(' | ') || 'none'}`,
-    ACTIVE_COMPANY ? counts.projectWrites === 1 : formReachable === 0 && counts.projectWrites === 0
+    ACTIVE_COMPANY ? counts.projectWrites === 1 : counts.projectWrites === 0
   );
 
   if (errors.length) console.log('page errors:', errors.slice(0, 3));
