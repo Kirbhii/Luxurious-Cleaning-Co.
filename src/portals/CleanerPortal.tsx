@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { CheckCircle2, Images, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut, X } from 'lucide-react';
+import { CheckCircle2, Images, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut, Trash2 } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
@@ -383,15 +383,23 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
 
             {/* Show existing */}
             {(booking.beforePhotos.length + booking.progressPhotos.length + booking.afterPhotos.length > 0) && (
-              <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+              // py-2, not just pb-1: overflow-x-auto makes overflow-y auto too,
+              // and the button hangs 6px above the top edge — without the top
+              // padding the scroll row shaves the top of every circle off.
+              <div className="mt-3 flex gap-3 overflow-x-auto py-2">
                 {[...booking.beforePhotos, ...booking.progressPhotos, ...booking.afterPhotos].map((value, i) => {
                   const stamp = bookingPhotoStamp(value);
                   return (
-                    <div key={`${value}-${i}`} className="relative shrink-0">
+                    // The box owns the size, not the <img>: index.css has an
+                    // unlayered `img { height: auto }` that outranks every h-*
+                    // utility, so a portrait phone photo would render taller
+                    // than the skeleton that stood in for it and the strip
+                    // would jump as each one loaded.
+                    <div key={`${value}-${i}`} className="relative h-[72px] w-24 shrink-0">
                       <BookingPhoto
                         value={value}
                         alt="Uploaded"
-                        className="w-24 h-[72px] object-cover rounded-lg border border-gold-400/15"
+                        className="absolute inset-0 h-full w-full object-cover rounded-lg border border-gold-400/15"
                       />
                       {/* The time is read out of the stored path, so it is the
                           upload time and cannot drift from the record. */}
@@ -403,11 +411,13 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
                         onClick={() => requestDeletePhoto(value)}
                         disabled={saving}
                         aria-label={`Delete this ${stamp ? stamp.kind : ''} photo`}
-                        // after:-inset-2 grows the touch area to ~40px without
-                        // growing the visible dot.
-                        className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-white shadow transition-colors hover:bg-red-500 disabled:opacity-60 after:absolute after:-inset-2 after:content-['']"
+                        // Neutral until you go for it, then red. A red dot on
+                        // every thumbnail shouts at a screen whose main job is
+                        // looking at the photos. after:-inset-2 grows the touch
+                        // area to ~40px without growing the icon.
+                        className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-navy-950/75 text-cream-200 shadow backdrop-blur-sm transition-colors hover:border-red-400/60 hover:bg-red-600 hover:text-white disabled:opacity-60 after:absolute after:-inset-2 after:content-['']"
                       >
-                        <X size={12} />
+                        <Trash2 size={11} />
                       </button>
                     </div>
                   );
