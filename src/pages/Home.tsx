@@ -11,6 +11,10 @@ import logoOnLight from '../imports/logo-onlight.png';
 // of the stock photo's model. A stock URL can be swapped or rate-limited under
 // us; this ships with the bundle.
 import cleanerPortraitImg from '../imports/cleaner-portrait.webp';
+// One kitchen, two states. The stock pair showed two different rooms, which made
+// the comparison decorative rather than honest — you cannot see what changed.
+import kitchenBeforeImg from '../imports/kitchen-before.webp';
+import kitchenAfterImg from '../imports/kitchen-after.webp';
 import ReviewCard from '../components/ReviewCard';
 import { fetchReviews, isMissingTable, type ReviewRow } from '../lib/supabase';
 
@@ -22,8 +26,8 @@ const IMG = {
   phoneBottom:  'https://images.unsplash.com/photo-1613545325278-f24b0cae1224?w=400&h=220&fit=crop&auto=format',
   whyUs:        cleanerPortraitImg,
   serviceBg:    'https://images.unsplash.com/photo-1779345169505-be7319f62b97?w=1200&h=600&fit=crop&auto=format',
-  beforeClean:  'https://images.unsplash.com/photo-1597796681855-a8f9f83012f2?w=700&h=480&fit=crop&auto=format',
-  afterClean:   'https://images.unsplash.com/photo-1628745277874-919d8f8ed03a?w=700&h=480&fit=crop&auto=format',
+  beforeClean:  kitchenBeforeImg,
+  afterClean:   kitchenAfterImg,
   commercial:   'https://images.unsplash.com/photo-1497366216548-37526070297c?w=700&h=500&fit=crop&auto=format',
   condo:        'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=400&h=300&fit=crop&auto=format',
   livingRoom:   'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=400&h=300&fit=crop&auto=format',
@@ -556,14 +560,18 @@ export default function Home() {
           </div>
 
           <div className="grid md:grid-cols-2 gap-3">
-            <div className="relative overflow-hidden rounded-2xl group">
-              <img src={IMG.beforeClean} alt="Before cleaning" className="w-full h-80 object-cover brightness-75 group-hover:brightness-90 transition-all duration-500" />
+            {/* aspect-[3/2] on the panel, not a height on the <img>: index.css
+                sets an unlayered `img { height: auto }`, which outranks every
+                h-* utility. A box with a fixed shape plus absolute positioning
+                gives both panels identical geometry whatever the file's ratio. */}
+            <div className="relative overflow-hidden rounded-2xl group aspect-[3/2]">
+              <img src={IMG.beforeClean} alt="The same kitchen before cleaning" loading="lazy" className="absolute inset-0 h-full w-full object-cover group-hover:brightness-105 transition-all duration-500" />
               <div className="absolute top-4 left-4 bg-[#1C1612]/90 backdrop-blur-sm text-white text-xs font-black tracking-[0.2em] uppercase px-4 py-2 rounded">
                 BEFORE
               </div>
             </div>
-            <div className="relative overflow-hidden rounded-2xl group">
-              <img src={IMG.afterClean} alt="After cleaning" className="w-full h-80 object-cover brightness-100 group-hover:brightness-110 transition-all duration-500" />
+            <div className="relative overflow-hidden rounded-2xl group aspect-[3/2]">
+              <img src={IMG.afterClean} alt="The same kitchen after cleaning" loading="lazy" className="absolute inset-0 h-full w-full object-cover group-hover:brightness-105 transition-all duration-500" />
               <div className="absolute top-4 left-4 bg-[#F5A623] text-[#1C1612] text-xs font-black tracking-[0.2em] uppercase px-4 py-2 rounded">
                 AFTER ✓
               </div>
