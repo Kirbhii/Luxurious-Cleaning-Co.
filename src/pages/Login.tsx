@@ -25,7 +25,7 @@ import {
   validatePhone,
   validatePassword,
 } from '../lib/validation';
-import loginImage from '../imports/luxury-vacuum.webp';
+import loginImage from '../imports/login-cleaner.webp';
 import Logo from '../components/Logo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -788,6 +788,10 @@ export default function Login() {
       <div className="hidden lg:flex lg:flex-1 relative lg:h-screen overflow-hidden">
         <img src={loginImage} alt="Luxury interior" className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-navy-950/60 to-navy-950/20" />
+        {/* Second scrim, bottom-up. The quote is near-white and this photo's
+            lower-left corner is a pale marble surface, so the horizontal
+            gradient alone leaves it white-on-white. */}
+        <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-navy-950/80 via-navy-950/35 to-transparent" />
         <div className="absolute bottom-12 left-12">
           <div className="font-serif text-3xl text-cream-50 mb-2 italic">"Your space, elevated."</div>
           <div className="text-cream-200/70 text-sm">Luxurious Cleaning Co.</div>
