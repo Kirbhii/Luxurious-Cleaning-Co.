@@ -7,16 +7,20 @@ import {
 import { useCurrentUser } from '../store';
 import Logo from '../components/Logo';
 import logoOnLight from '../imports/logo-onlight.png';
+// Local, not a stock URL. Generated for this brand: a Filipino cleaner instead
+// of the stock photo's model. A stock URL can be swapped or rate-limited under
+// us; this ships with the bundle.
+import cleanerPortraitImg from '../imports/cleaner-portrait.webp';
 import ReviewCard from '../components/ReviewCard';
 import { fetchReviews, isMissingTable, type ReviewRow } from '../lib/supabase';
 
 /* ─── image constants ─────────────────────────────────────────── */
 const IMG = {
   heroBg:       'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=1600&h=900&fit=crop&auto=format',
-  cleanerPortrait: 'https://images.pexels.com/photos/6195122/pexels-photo-6195122.jpeg?w=600&h=900&fit=crop&auto=compress',
+  cleanerPortrait: cleanerPortraitImg,
   phoneTop:     'https://images.unsplash.com/photo-1628745277862-bc0b2d68c50c?w=400&h=220&fit=crop&auto=format',
   phoneBottom:  'https://images.unsplash.com/photo-1613545325278-f24b0cae1224?w=400&h=220&fit=crop&auto=format',
-  whyUs:        'https://images.pexels.com/photos/6197118/pexels-photo-6197118.jpeg?w=700&h=800&fit=crop&auto=compress',
+  whyUs:        cleanerPortraitImg,
   serviceBg:    'https://images.unsplash.com/photo-1779345169505-be7319f62b97?w=1200&h=600&fit=crop&auto=format',
   beforeClean:  'https://images.unsplash.com/photo-1597796681855-a8f9f83012f2?w=700&h=480&fit=crop&auto=format',
   afterClean:   'https://images.unsplash.com/photo-1628745277874-919d8f8ed03a?w=700&h=480&fit=crop&auto=format',
@@ -479,7 +483,10 @@ export default function Home() {
               <img
                 src={IMG.whyUs}
                 alt="Cleaner at work"
-                className="w-full h-[560px] object-cover rounded-2xl"
+                // object-top: the portrait is 2:3 and this box is square, so a
+                // centred crop takes the top of the frame off — which is where
+                // the face is.
+                className="w-full h-[560px] object-cover object-top rounded-2xl"
               />
               {/* Amber accent block */}
               <div className="absolute -bottom-5 -right-5 bg-[#F5A623] rounded-xl p-5 shadow-2xl max-w-[200px]">

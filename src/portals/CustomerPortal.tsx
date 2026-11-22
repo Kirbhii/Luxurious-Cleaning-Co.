@@ -12,6 +12,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import ThemeToggle from '../components/ThemeToggle';
 import ReviewCard from '../components/ReviewCard';
 import ReviewFormModal from '../components/ReviewFormModal';
+import BookingPhoto from '../components/BookingPhoto';
 import {
   signOut, deleteBookingRow, updateProfile, cancelMembership as cancelMembershipDb, isUuid,
   fetchMyReviews, deleteReview, type ReviewRow,
@@ -129,8 +130,13 @@ function BookingCard({ booking, cleanerName, onDelete, onReview }: { booking: Bo
                 <div key={group.label}>
                   <div className="text-xs text-cream-300/70 uppercase tracking-wider mb-2">{group.label}</div>
                   <div className="flex gap-2 overflow-x-auto">
-                    {group.photos.map((url, i) => (
-                      <img key={i} src={url} alt={group.label} className="w-28 h-20 object-cover rounded-lg shrink-0 border border-gold-400/10" />
+                    {group.photos.map((value, i) => (
+                      <BookingPhoto
+                        key={`${value}-${i}`}
+                        value={value}
+                        alt={group.label}
+                        className="w-28 h-20 object-cover rounded-lg shrink-0 border border-gold-400/10"
+                      />
                     ))}
                   </div>
                 </div>

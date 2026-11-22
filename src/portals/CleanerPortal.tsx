@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { CheckCircle2, Camera, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut } from 'lucide-react';
+import { CheckCircle2, Camera, Images, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
@@ -8,15 +8,10 @@ import ThemeToggle from '../components/ThemeToggle';
 import PinPromptModal from '../components/PinPromptModal';
 import PinSettings, { PinGuidance } from '../components/PinSettings';
 import MfaSettings, { MfaGuidance } from '../components/MfaSettings';
-import { signOut, updateBookingRow } from '../lib/supabase';
+import BookingPhoto from '../components/BookingPhoto';
+import { signOut, updateBookingRow, uploadBookingPhoto } from '../lib/supabase';
+import { compressImage } from '../lib/image';
 import { useToast } from '../components/ToastContainer';
-
-const SAMPLE_PHOTOS = [
-  'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=400&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1556020685-ae41abfc9365?w=600&h=400&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1583847268964-b28dc8f51f92?w=600&h=400&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop&auto=format',
-];
 
 const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus | null> = {
   awaiting_review: null,
@@ -49,6 +44,13 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
   // PIN-gated variant of `confirmation`. Only "Mark as Completed" uses it — see
   // requestStatusUpdate below and PIN_PLAN.md §2.
   const [pinGate, setPinGate] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
+
+  // Two hidden file inputs, not one. The difference is `capture`: without it the
+  // phone offers the gallery, with `capture="environment"` it opens the rear
+  // camera directly. One input cannot offer both, so the cleaner gets a choice
+  // of two buttons.
+  const galleryInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
 
   const nextStatus = STATUS_TRANSITIONS[booking.status];
 
@@ -146,15 +148,20 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
     });
   }
 
-  function uploadPhoto() {
+  function uploadPhoto(file: File) {
     setSaving(true);
-    setTimeout(async () => {
-      const photoUrl = SAMPLE_PHOTOS[Math.floor(Math.random() * SAMPLE_PHOTOS.length)];
+    (async () => {
+      // Resize first, then upload, then write the path onto the booking. The
+      // local state is only changed after the row is saved — a photo that is
+      // on screen but not in the database is a lie the cleaner would act on.
+      const blob = await compressImage(file);
+      const { path } = await uploadBookingPhoto(blob, booking.id, photoType);
+
       const updated: Booking = {
         ...booking,
-        beforePhotos: photoType === 'before' ? [...booking.beforePhotos, photoUrl] : booking.beforePhotos,
-        progressPhotos: photoType === 'progress' ? [...booking.progressPhotos, photoUrl] : booking.progressPhotos,
-        afterPhotos: photoType === 'after' ? [...booking.afterPhotos, photoUrl] : booking.afterPhotos,
+        beforePhotos: photoType === 'before' ? [...booking.beforePhotos, path] : booking.beforePhotos,
+        progressPhotos: photoType === 'progress' ? [...booking.progressPhotos, path] : booking.progressPhotos,
+        afterPhotos: photoType === 'after' ? [...booking.afterPhotos, path] : booking.afterPhotos,
         timeline: [...booking.timeline, {
           id: genId('tl'),
           event: `${photoType.charAt(0).toUpperCase() + photoType.slice(1)} Photo Uploaded`,
@@ -165,19 +172,17 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
         updatedAt: new Date().toISOString(),
       };
 
-      dispatch({ type: 'UPDATE_BOOKING', payload: updated });
-
       const { error } = await updateBookingRow(booking.id, {
         before_photos: updated.beforePhotos,
         progress_photos: updated.progressPhotos,
         after_photos: updated.afterPhotos,
       });
       if (error) {
-        dispatch({ type: 'UPDATE_BOOKING', payload: booking });
         toast.error('Photo not saved', error.message);
-        setSaving(false);
         return;
       }
+
+      dispatch({ type: 'UPDATE_BOOKING', payload: updated });
 
       // Tell the customer only once the photo is actually stored.
       void saveNotification(dispatch, {
@@ -186,17 +191,20 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
         message: `Your cleaning team has uploaded a new ${photoType} photo for Booking #${booking.id}.`,
         link: '/portal/customer',
       });
-      setSaving(false);
-    }, 800);
+    })()
+      .catch((err: unknown) => {
+        toast.error('Photo not uploaded', err instanceof Error ? err.message : 'Please try again.');
+      })
+      .finally(() => setSaving(false));
   }
 
-  function requestUploadPhoto() {
-    setConfirmation({
-      title: 'Upload photo?',
-      message: `Add this ${photoType} photo update to the booking?`,
-      confirmLabel: 'Upload',
-      onConfirm: () => { uploadPhoto(); setConfirmation(null); },
-    });
+  async function handlePhotoPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Clear the input first: picking the SAME photo twice must still fire
+    // onChange, and it will not while the value is unchanged.
+    e.target.value = '';
+    if (!file) return;
+    uploadPhoto(file);
   }
 
   return (
@@ -285,21 +293,57 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
                 </button>
               ))}
             </div>
-            <button
-                onClick={requestUploadPhoto}
-              disabled={saving}
-              className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
-            >
-              <Camera size={14} className="text-gold-400" />
-              {saving ? 'Uploading…' : `Upload ${photoType} photo`}
-            </button>
-            <div className="text-xs text-cream-300/50 mt-1">Demo: uploads a sample photo</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => galleryInput.current?.click()}
+                disabled={saving}
+                className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+              >
+                <Images size={14} className="text-gold-400" />
+                {saving ? 'Uploading…' : 'Choose from gallery'}
+              </button>
+              <button
+                type="button"
+                onClick={() => cameraInput.current?.click()}
+                disabled={saving}
+                className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+              >
+                <Camera size={14} className="text-gold-400" />
+                {saving ? 'Uploading…' : 'Take photo'}
+              </button>
+            </div>
+
+            <input
+              ref={galleryInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handlePhotoPicked}
+            />
+            <input
+              ref={cameraInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handlePhotoPicked}
+            />
+
+            <div className="text-xs text-cream-300/50 mt-1">
+              Photos are shrunk to fit before sending, so it works on mobile data.
+            </div>
 
             {/* Show existing */}
             {(booking.beforePhotos.length + booking.progressPhotos.length + booking.afterPhotos.length > 0) && (
               <div className="mt-3 flex gap-2 overflow-x-auto">
-                {[...booking.beforePhotos, ...booking.progressPhotos, ...booking.afterPhotos].map((url, i) => (
-                  <img key={i} src={url} alt="Uploaded" className="w-20 h-14 object-cover rounded-lg shrink-0 border border-gold-400/15" />
+                {[...booking.beforePhotos, ...booking.progressPhotos, ...booking.afterPhotos].map((value, i) => (
+                  <BookingPhoto
+                    key={`${value}-${i}`}
+                    value={value}
+                    alt="Uploaded"
+                    className="w-20 h-14 object-cover rounded-lg shrink-0 border border-gold-400/15"
+                  />
                 ))}
               </div>
             )}

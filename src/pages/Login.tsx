@@ -25,7 +25,7 @@ import {
   validatePhone,
   validatePassword,
 } from '../lib/validation';
-import loginImage from '../imports/login-cleaning.jpg';
+import loginImage from '../imports/luxury-vacuum.webp';
 import Logo from '../components/Logo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

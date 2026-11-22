@@ -5,7 +5,7 @@ import { updatePassword } from '../lib/supabase';
 import { validatePassword } from '../lib/validation';
 import PasswordCriteria from '../components/PasswordCriteria';
 import Logo from '../components/Logo';
-import loginImage from '../imports/login-cleaning.jpg';
+import loginImage from '../imports/luxury-vacuum.webp';
 
 export default function ResetPassword() {
   const navigate = useNavigate();

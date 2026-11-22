@@ -1851,6 +1851,65 @@ export async function getResumeSignedUrl(
   return { url: data?.signedUrl ?? null, error: null };
 }
 
+// ─── Booking photos ─────────────────────────────────────────────────────────
+//  Photos a cleaner takes on the job. Private bucket, same shape as resumes:
+//  the database stores the object PATH, never a URL, and the screen exchanges
+//  it for a short-lived signed URL. Path shape is <bookingId>/<kind>_<stamp>_<rand>.jpg
+//  because the storage policies read the first folder as the booking id.
+
+export const BOOKING_PHOTO_BUCKET = 'booking-photos';
+
+export type BookingPhotoKind = 'before' | 'progress' | 'after';
+
+/** True when a stored photo value is a bucket path rather than a URL.
+ *
+ *  Rows written before the bucket existed hold plain https URLs from the demo
+ *  data, and both shapes have to keep rendering — so the value decides how it
+ *  is read rather than the caller.
+ */
+export function isStoragePath(value: string): boolean {
+  if (!value) return false;
+  return !/^(https?:|data:|blob:)/i.test(value);
+}
+
+/** Upload one photo and return its storage path. Throws with a message that can
+ *  be shown to the user. A missing bucket is reported in plain language,
+ *  because that is what happens before 19_BOOKING_PHOTOS.sql is pasted.
+ */
+export async function uploadBookingPhoto(
+  blob: Blob,
+  bookingId: string,
+  kind: BookingPhotoKind
+): Promise<{ path: string }> {
+  const path = `${bookingId}/${kind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+
+  const { error } = await supabase.storage
+    .from(BOOKING_PHOTO_BUCKET)
+    .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+
+  if (error) {
+    if (/bucket/i.test(error.message) || /not found/i.test(error.message)) {
+      throw new Error('Photo storage is not switched on yet. Please tell the office.');
+    }
+    throw new Error(error.message);
+  }
+
+  return { path };
+}
+
+/** Short-lived URL for a private booking photo. */
+export async function getBookingPhotoUrl(
+  path: string,
+  expiresInSeconds = 60 * 60
+): Promise<{ url: string | null; error: { message: string } | null }> {
+  const { data, error } = await supabase.storage
+    .from(BOOKING_PHOTO_BUCKET)
+    .createSignedUrl(path, expiresInSeconds);
+
+  if (error) return { url: null, error: { message: error.message } };
+  return { url: data?.signedUrl ?? null, error: null };
+}
+
 // ─── Reviews ─────────────────────────────────────────────────────────────────
 
 /** True when the query failed because the table has not been created yet.
