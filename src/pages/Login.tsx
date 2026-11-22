@@ -777,9 +777,15 @@ export default function Login() {
 
   // ── Main login/register layout ────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-navy-950 flex">
-      {/* Left visual */}
-      <div className="hidden lg:flex lg:flex-1 relative">
+    <div className="min-h-screen bg-navy-950 flex lg:h-screen">
+      {/* Left visual.
+          `lg:h-screen` is load-bearing. The photo is 2:3, and `h-full` on an
+          image inside an auto-height column resolves to the image's natural
+          height — at 928px wide that is 1392px tall, which stretched the whole
+          page past the viewport and left a scrollbar on a screen that should
+          never scroll. A definite height on the column makes `h-full` mean
+          "the viewport", and object-cover crops the rest. */}
+      <div className="hidden lg:flex lg:flex-1 relative lg:h-screen overflow-hidden">
         <img src={loginImage} alt="Luxury interior" className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-navy-950/60 to-navy-950/20" />
         <div className="absolute bottom-12 left-12">

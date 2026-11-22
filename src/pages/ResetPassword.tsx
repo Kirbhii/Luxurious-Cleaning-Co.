@@ -78,9 +78,10 @@ export default function ResetPassword() {
   }
 
   return (
-    <div className="min-h-screen bg-navy-950 flex">
-      {/* Left visual */}
-      <div className="hidden lg:flex lg:flex-1 relative">
+    <div className="min-h-screen bg-navy-950 flex lg:h-screen">
+      {/* Left visual. `lg:h-screen` keeps the 2:3 photo from dictating the page
+          height — see the same note in Login.tsx. */}
+      <div className="hidden lg:flex lg:flex-1 relative lg:h-screen overflow-hidden">
         <img
           src={loginImage}
           alt="Luxury interior"
