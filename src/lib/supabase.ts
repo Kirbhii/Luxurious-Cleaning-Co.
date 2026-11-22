@@ -1910,6 +1910,36 @@ export async function getBookingPhotoUrl(
   return { url: data?.signedUrl ?? null, error: null };
 }
 
+/** Remove one uploaded photo from the bucket. The caller is responsible for
+ *  dropping the path from the booking row — this only touches the object.
+ *  A missing object is treated as success: the outcome the caller wants is
+ *  "it is not there any more".
+ */
+export async function deleteBookingPhoto(path: string): Promise<{ error: { message: string } | null }> {
+  const { error } = await supabase.storage.from(BOOKING_PHOTO_BUCKET).remove([path]);
+  if (error && !/not found/i.test(error.message)) {
+    return { error: { message: error.message } };
+  }
+  return { error: null };
+}
+
+/** When a photo was uploaded, read out of the path it was stored under.
+ *
+ *  The path is <bookingId>/<kind>_<epochMillis>_<rand>.jpg, so the time is
+ *  already in the record — no extra column, and nothing to keep in sync.
+ *  Returns null for legacy https values, which carry no timestamp.
+ */
+export function bookingPhotoStamp(value: string): { kind: BookingPhotoKind; at: Date } | null {
+  if (!isStoragePath(value)) return null;
+  const file = value.split('/').pop() ?? '';
+  const [kind, millis] = file.split('_');
+  if (!kind || !millis) return null;
+  const at = new Date(Number(millis));
+  if (Number.isNaN(at.getTime())) return null;
+  if (kind !== 'before' && kind !== 'progress' && kind !== 'after') return null;
+  return { kind, at };
+}
+
 // ─── Reviews ─────────────────────────────────────────────────────────────────
 
 /** True when the query failed because the table has not been created yet.

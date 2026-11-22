@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { CheckCircle2, Camera, Images, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut } from 'lucide-react';
+import { CheckCircle2, Images, FileText, ChevronDown, ChevronUp, ArrowLeft, LogOut, X } from 'lucide-react';
 import { useStore, useCurrentUser, STATUS_LABELS, STATUS_COLORS, genId, saveNotification } from '../store';
 import type { Booking, BookingStatus } from '../store';
 import ConfirmModal from '../components/ConfirmModal';
@@ -9,9 +9,26 @@ import PinPromptModal from '../components/PinPromptModal';
 import PinSettings, { PinGuidance } from '../components/PinSettings';
 import MfaSettings, { MfaGuidance } from '../components/MfaSettings';
 import BookingPhoto from '../components/BookingPhoto';
-import { signOut, updateBookingRow, uploadBookingPhoto } from '../lib/supabase';
+import {
+  signOut,
+  updateBookingRow,
+  uploadBookingPhoto,
+  deleteBookingPhoto,
+  bookingPhotoStamp,
+  isStoragePath,
+} from '../lib/supabase';
 import { compressImage } from '../lib/image';
 import { useToast } from '../components/ToastContainer';
+
+/** "14:32" for a photo taken today, "Oct 27" for anything older.
+ *  24-hour and no year: this sits on a 96px thumbnail, and "02:40 PM" or
+ *  "Oct 27, 11:33 AM" runs off the edge of it. */
+function formatStamp(at: Date): string {
+  const sameDay = at.toDateString() === new Date().toDateString();
+  return at.toLocaleString('en-PH', sameDay
+    ? { hour: '2-digit', minute: '2-digit', hour12: false }
+    : { month: 'short', day: 'numeric' });
+}
 
 const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus | null> = {
   awaiting_review: null,
@@ -45,12 +62,10 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
   // requestStatusUpdate below and PIN_PLAN.md §2.
   const [pinGate, setPinGate] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
 
-  // Two hidden file inputs, not one. The difference is `capture`: without it the
-  // phone offers the gallery, with `capture="environment"` it opens the rear
-  // camera directly. One input cannot offer both, so the cleaner gets a choice
-  // of two buttons.
-  const galleryInput = useRef<HTMLInputElement>(null);
-  const cameraInput = useRef<HTMLInputElement>(null);
+  // One hidden input is enough. On a phone the picker already offers "Take
+  // photo" beside the gallery, so a second button carrying capture="environment"
+  // only takes the choice away from the user.
+  const photoInput = useRef<HTMLInputElement>(null);
 
   const nextStatus = STATUS_TRANSITIONS[booking.status];
 
@@ -207,6 +222,57 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
     uploadPhoto(file);
   }
 
+  function requestDeletePhoto(value: string) {
+    const stamp = bookingPhotoStamp(value);
+    setConfirmation({
+      title: 'Delete this photo?',
+      message: `The ${stamp ? `${stamp.kind} ` : ''}photo will be removed from this booking for good. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: () => { void deletePhoto(value); setConfirmation(null); },
+    });
+  }
+
+  async function deletePhoto(value: string) {
+    setSaving(true);
+    try {
+      // Object first. If the row were cleared first and this failed, the photo
+      // would be gone from the screen but still sitting in the bucket forever,
+      // with nothing left pointing at it to find it again.
+      if (isStoragePath(value)) {
+        const { error } = await deleteBookingPhoto(value);
+        if (error) throw new Error(error.message);
+      }
+
+      const updated: Booking = {
+        ...booking,
+        beforePhotos: booking.beforePhotos.filter(v => v !== value),
+        progressPhotos: booking.progressPhotos.filter(v => v !== value),
+        afterPhotos: booking.afterPhotos.filter(v => v !== value),
+        timeline: [...booking.timeline, {
+          id: genId('tl'),
+          event: 'Photo Removed',
+          note: 'An uploaded photo was removed from this booking.',
+          timestamp: new Date().toISOString(),
+          actor: 'Cleaner',
+        }],
+        updatedAt: new Date().toISOString(),
+      };
+
+      const { error } = await updateBookingRow(booking.id, {
+        before_photos: updated.beforePhotos,
+        progress_photos: updated.progressPhotos,
+        after_photos: updated.afterPhotos,
+      });
+      if (error) throw new Error(error.message);
+
+      dispatch({ type: 'UPDATE_BOOKING', payload: updated });
+    } catch (err) {
+      toast.error('Photo not deleted', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="bg-navy-800 border border-gold-400/10 rounded-xl overflow-hidden">
       {confirmation && <ConfirmModal {...confirmation} onCancel={() => setConfirmation(null)} />}
@@ -293,58 +359,59 @@ function JobCard({ booking, customerName, customerEmail, customerPhone }: { book
                 </button>
               ))}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => galleryInput.current?.click()}
-                disabled={saving}
-                className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
-              >
-                <Images size={14} className="text-gold-400" />
-                {saving ? 'Uploading…' : 'Choose from gallery'}
-              </button>
-              <button
-                type="button"
-                onClick={() => cameraInput.current?.click()}
-                disabled={saving}
-                className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
-              >
-                <Camera size={14} className="text-gold-400" />
-                {saving ? 'Uploading…' : 'Take photo'}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => photoInput.current?.click()}
+              disabled={saving}
+              className="flex items-center gap-2 border border-gold-400/25 hover:border-gold-400/50 text-cream-200 text-sm px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+            >
+              <Images size={14} className="text-gold-400" />
+              {saving ? 'Uploading…' : 'Upload photo'}
+            </button>
 
             <input
-              ref={galleryInput}
+              ref={photoInput}
               type="file"
               accept="image/*"
-              className="hidden"
-              onChange={handlePhotoPicked}
-            />
-            <input
-              ref={cameraInput}
-              type="file"
-              accept="image/*"
-              capture="environment"
               className="hidden"
               onChange={handlePhotoPicked}
             />
 
             <div className="text-xs text-cream-300/50 mt-1">
-              Photos are shrunk to fit before sending, so it works on mobile data.
+              On a phone you can take a photo straight from there too. Pictures are shrunk before sending, so it works on mobile data.
             </div>
 
             {/* Show existing */}
             {(booking.beforePhotos.length + booking.progressPhotos.length + booking.afterPhotos.length > 0) && (
-              <div className="mt-3 flex gap-2 overflow-x-auto">
-                {[...booking.beforePhotos, ...booking.progressPhotos, ...booking.afterPhotos].map((value, i) => (
-                  <BookingPhoto
-                    key={`${value}-${i}`}
-                    value={value}
-                    alt="Uploaded"
-                    className="w-20 h-14 object-cover rounded-lg shrink-0 border border-gold-400/15"
-                  />
-                ))}
+              <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+                {[...booking.beforePhotos, ...booking.progressPhotos, ...booking.afterPhotos].map((value, i) => {
+                  const stamp = bookingPhotoStamp(value);
+                  return (
+                    <div key={`${value}-${i}`} className="relative shrink-0">
+                      <BookingPhoto
+                        value={value}
+                        alt="Uploaded"
+                        className="w-24 h-[72px] object-cover rounded-lg border border-gold-400/15"
+                      />
+                      {/* The time is read out of the stored path, so it is the
+                          upload time and cannot drift from the record. */}
+                      <span className="absolute bottom-1 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">
+                        {stamp ? `${stamp.kind} · ${formatStamp(stamp.at)}` : 'photo'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => requestDeletePhoto(value)}
+                        disabled={saving}
+                        aria-label={`Delete this ${stamp ? stamp.kind : ''} photo`}
+                        // after:-inset-2 grows the touch area to ~40px without
+                        // growing the visible dot.
+                        className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-white shadow transition-colors hover:bg-red-500 disabled:opacity-60 after:absolute after:-inset-2 after:content-['']"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
